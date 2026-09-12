@@ -91,28 +91,88 @@ export default function Clients() {
     });
 
     async function creerClient() {
-        if (!newNom.trim()) return;
-        setSaving(true);
-        await addDoc(collection(db, 'clients'), {
-            nom: newNom.trim(), prenom: '', email: '', telephone: '', adresse: '',
-            prestations: '', categorieId: null, categorieNom: null,
+        const nom = newNom.trim();
+        if (!nom) return;
+
+        // Fermeture et réinitialisation immédiate (0 ms)
+        setNewNom('');
+        setShowNew(false);
+
+        const tempId = 'temp_' + Date.now();
+        const nouveauClient = {
+            id: tempId,
+            nom,
+            prenom: '',
+            email: '',
+            telephone: '',
+            adresse: '',
+            prestations: '',
+            categorieId: null,
+            categorieNom: null,
             abonnementMensuelManuel: 0,
-            createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            totalEncaisse: 0,
+            abonnementMensuel: 0,
+        };
+
+        // 1. Mise à jour optimiste INSTANTANÉE (0 ms)
+        setClients((prev) => {
+            const next = [nouveauClient, ...prev].sort((a, b) => (a.nom || '').localeCompare(b.nom || ''));
+            setCached('clients', next);
+            return next;
         });
-        setNewNom(''); setShowNew(false); setSaving(false);
-        load();
+
+        // 2. Persistance Firestore en arrière-plan sans bloquer
+        try {
+            const docRef = await addDoc(collection(db, 'clients'), {
+                nom,
+                prenom: '',
+                email: '',
+                telephone: '',
+                adresse: '',
+                prestations: '',
+                categorieId: null,
+                categorieNom: null,
+                abonnementMensuelManuel: 0,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+            });
+            // Remplacer l'id temporaire par l'id Firestore
+            setClients((prev) => {
+                const next = prev.map((c) => (c.id === tempId ? { ...c, id: docRef.id } : c));
+                setCached('clients', next);
+                return next;
+            });
+        } catch (err) {
+            console.error('Erreur création client:', err);
+            load();
+        }
     }
 
     async function changerCategorie(clientId, catId) {
         const cat = categories.find((c) => c.id === catId);
-        await updateDoc(doc(db, 'clients', clientId), {
-            categorieId: catId || null,
-            categorieNom: cat?.nom || null,
-            updatedAt: serverTimestamp(),
+
+        // 1. Mise à jour optimiste INSTANTANÉE (0 ms) : l'écran change à la milliseconde
+        setClients((prev) => {
+            const next = prev.map((c) =>
+                c.id === clientId
+                    ? { ...c, categorieId: catId || null, categorieNom: cat?.nom || null }
+                    : c
+            );
+            setCached('clients', next);
+            return next;
         });
-        setClients((prev) => prev.map((c) =>
-            c.id === clientId ? { ...c, categorieId: catId, categorieNom: cat?.nom } : c
-        ));
+
+        // 2. Persistance Firestore silencieuse en arrière-plan
+        try {
+            await updateDoc(doc(db, 'clients', clientId), {
+                categorieId: catId || null,
+                categorieNom: cat?.nom || null,
+                updatedAt: serverTimestamp(),
+            });
+        } catch (err) {
+            console.error('Erreur mise à jour catégorie client:', err);
+            load();
+        }
     }
 
     const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));

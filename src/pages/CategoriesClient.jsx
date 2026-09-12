@@ -83,21 +83,55 @@ export default function CategoriesClient() {
     }
 
     async function handleSave() {
-        if (!formNom.trim()) return;
-        setSaving(true);
+        const nom = formNom.trim();
+        if (!nom) return;
+        const coul = formCoul;
+
+        // Fermeture immédiate du formulaire (0 ms)
+        setShowForm(false);
+
         if (editId) {
-            await updateDoc(doc(db, 'categoriesClient', editId), {
-                nom: formNom.trim(), couleur: formCoul, updatedAt: serverTimestamp(),
+            // 1. Mise à jour optimiste INSTANTANÉE (0 ms)
+            const updated = categories.map((c) => (c.id === editId ? { ...c, nom, couleur: coul } : c));
+            setCategories(updated);
+            setCached('categoriesClient', updated);
+
+            // 2. Persistance en arrière-plan
+            updateDoc(doc(db, 'categoriesClient', editId), {
+                nom, couleur: coul, updatedAt: serverTimestamp(),
+            }).catch((err) => {
+                console.error('Erreur mise à jour catégorie:', err);
+                load();
             });
         } else {
-            await addDoc(collection(db, 'categoriesClient'), {
-                nom: formNom.trim(), couleur: formCoul,
+            const tempId = 'temp_' + Date.now();
+            const newCat = {
+                id: tempId,
+                nom,
+                couleur: coul,
+                ordre: categories.length + 1,
+            };
+            // 1. Ajout optimiste INSTANTANÉ (0 ms)
+            const updated = [...categories, newCat];
+            setCategories(updated);
+            setCached('categoriesClient', updated);
+
+            // 2. Persistance en arrière-plan
+            addDoc(collection(db, 'categoriesClient'), {
+                nom, couleur: coul,
                 ordre: categories.length + 1,
                 createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            }).then((docRef) => {
+                setCategories((prev) => {
+                    const next = prev.map((c) => (c.id === tempId ? { ...c, id: docRef.id } : c));
+                    setCached('categoriesClient', next);
+                    return next;
+                });
+            }).catch((err) => {
+                console.error('Erreur ajout catégorie:', err);
+                load();
             });
         }
-        setShowForm(false); setSaving(false);
-        load();
     }
 
     async function handleDelete(catId) {
@@ -105,29 +139,64 @@ export default function CategoriesClient() {
         if (nbClients > 0) {
             const ok = window.confirm(`Cette catégorie contient ${nbClients} client(s). Ils seront mis en "Non catégorisé". Continuer ?`);
             if (!ok) return;
-            // Mettre à jour les clients rattachés
+
+            // Mise à jour optimiste des clients rattachés (0 ms)
+            const updatedClients = clients.map((c) =>
+                c.categorieId === catId ? { ...c, categorieId: null, categorieNom: null } : c
+            );
+            setClients(updatedClients);
+            setCached('clients', updatedClients);
+
             for (const c of clients.filter((c) => c.categorieId === catId)) {
-                await updateDoc(doc(db, 'clients', c.id), { categorieId: null, categorieNom: null, updatedAt: serverTimestamp() });
+                updateDoc(doc(db, 'clients', c.id), {
+                    categorieId: null, categorieNom: null, updatedAt: serverTimestamp(),
+                }).catch(() => {});
             }
         }
-        await deleteDoc(doc(db, 'categoriesClient', catId));
-        load();
+
+        // Suppression optimiste INSTANTANÉE (0 ms)
+        const updated = categories.filter((c) => c.id !== catId);
+        setCategories(updated);
+        setCached('categoriesClient', updated);
+
+        deleteDoc(doc(db, 'categoriesClient', catId)).catch((err) => {
+            console.error('Erreur suppression catégorie:', err);
+            load();
+        });
     }
 
     async function moveUp(idx) {
         if (idx === 0) return;
         const updated = [...categories];
         [updated[idx - 1], updated[idx]] = [updated[idx], updated[idx - 1]];
-        await Promise.all(updated.map((c, i) => updateDoc(doc(db, 'categoriesClient', c.id), { ordre: i + 1 })));
-        load();
+        updated.forEach((c, i) => { c.ordre = i + 1; });
+
+        // Mise à jour optimiste INSTANTANÉE (0 ms)
+        setCategories(updated);
+        setCached('categoriesClient', updated);
+
+        // Persistance en arrière-plan
+        Promise.all(updated.map((c, i) => updateDoc(doc(db, 'categoriesClient', c.id), { ordre: i + 1 }))).catch((err) => {
+            console.error('Erreur réordonnancement catégories:', err);
+            load();
+        });
     }
 
     async function moveDown(idx) {
         if (idx === categories.length - 1) return;
         const updated = [...categories];
         [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
-        await Promise.all(updated.map((c, i) => updateDoc(doc(db, 'categoriesClient', c.id), { ordre: i + 1 })));
-        load();
+        updated.forEach((c, i) => { c.ordre = i + 1; });
+
+        // Mise à jour optimiste INSTANTANÉE (0 ms)
+        setCategories(updated);
+        setCached('categoriesClient', updated);
+
+        // Persistance en arrière-plan
+        Promise.all(updated.map((c, i) => updateDoc(doc(db, 'categoriesClient', c.id), { ordre: i + 1 }))).catch((err) => {
+            console.error('Erreur réordonnancement catégories:', err);
+            load();
+        });
     }
 
     const noncategorises = clients.filter((c) => !c.categorieId);

@@ -120,32 +120,84 @@ export default function Associes() {
         const tauxCCA = form.tauxInteretCCA !== '' ? parseFloat(form.tauxInteretCCA) : null;
         if (tauxCCA !== null && (isNaN(tauxCCA) || tauxCCA < 0)) { setError('Le taux d\'intérêt doit être un nombre positif.'); return; }
 
-        setSaving(true); setError('');
+        // Fermeture immédiate du formulaire (0 ms)
+        setShowForm(false);
+        setError('');
 
         if (editId) {
-            await updateDoc(doc(db, 'associes', editId), {
+            // 1. Mise à jour optimiste INSTANTANÉE (0 ms)
+            setAssocies((prev) => {
+                const next = prev.map((a) =>
+                    a.id === editId
+                        ? {
+                              ...a,
+                              nom: form.nom.trim(),
+                              prenom: form.prenom.trim(),
+                              role: form.role,
+                              pourcentageParts: pct,
+                              tauxInteretCCA: tauxCCA,
+                          }
+                        : a
+                );
+                setCached('associes', next);
+                return next;
+            });
+
+            // 2. Persistance Firestore en arrière-plan
+            updateDoc(doc(db, 'associes', editId), {
                 nom: form.nom.trim(),
                 prenom: form.prenom.trim(),
                 role: form.role,
                 pourcentageParts: pct,
                 tauxInteretCCA: tauxCCA,
                 updatedAt: serverTimestamp(),
+            }).catch((err) => {
+                console.error('Erreur mise à jour associé:', err);
+                load();
             });
         } else {
-            await addDoc(collection(db, 'associes'), {
+            const tempId = 'temp_' + Date.now();
+            const nouveauCompteCC = prochainCompteCC();
+            const nouvelAssocie = {
+                id: tempId,
                 nom: form.nom.trim(),
                 prenom: form.prenom.trim(),
                 role: form.role,
                 pourcentageParts: pct,
                 tauxInteretCCA: tauxCCA,
-                compteCC: prochainCompteCC(),
+                compteCC: nouveauCompteCC,
+                actif: true,
+            };
+
+            // 1. Mise à jour optimiste INSTANTANÉE (0 ms)
+            setAssocies((prev) => {
+                const next = [...prev, nouvelAssocie];
+                setCached('associes', next);
+                return next;
+            });
+
+            // 2. Persistance Firestore en arrière-plan
+            addDoc(collection(db, 'associes'), {
+                nom: form.nom.trim(),
+                prenom: form.prenom.trim(),
+                role: form.role,
+                pourcentageParts: pct,
+                tauxInteretCCA: tauxCCA,
+                compteCC: nouveauCompteCC,
                 actif: true,
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
+            }).then((docRef) => {
+                setAssocies((prev) => {
+                    const next = prev.map((a) => (a.id === tempId ? { ...a, id: docRef.id } : a));
+                    setCached('associes', next);
+                    return next;
+                });
+            }).catch((err) => {
+                console.error('Erreur ajout associé:', err);
+                load();
             });
         }
-        setSaving(false); setShowForm(false);
-        load();
     }
 
     async function toggleActif(a) {
@@ -153,8 +205,19 @@ export default function Associes() {
             ? `Retirer ${a.nom} des associés actifs ? Ses données comptables sont conservées. Cette action ne remplace pas les formalités légales réelles (cession de parts, modification des statuts).`
             : `Réactiver ${a.nom} ?`;
         if (!window.confirm(msg)) return;
-        await updateDoc(doc(db, 'associes', a.id), { actif: !a.actif, updatedAt: serverTimestamp() });
-        load();
+
+        // Mise à jour optimiste instantanée (0 ms)
+        setAssocies((prev) => {
+            const next = prev.map((x) => (x.id === a.id ? { ...x, actif: !x.actif } : x));
+            setCached('associes', next);
+            return next;
+        });
+
+        // Persistance en arrière-plan
+        updateDoc(doc(db, 'associes', a.id), { actif: !a.actif, updatedAt: serverTimestamp() }).catch((err) => {
+            console.error('Erreur toggle actif:', err);
+            load();
+        });
     }
 
     const totalParts = associes.filter((a) => a.actif).reduce((s, a) => s + (a.pourcentageParts ?? 0), 0);

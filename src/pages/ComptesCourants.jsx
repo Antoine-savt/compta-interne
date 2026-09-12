@@ -305,28 +305,30 @@ export default function ComptesCourants() {
                 createdAt: serverTimestamp(),
             });
 
-            // Mettre à jour les documents pour les lier
-            for (const docId of formDocIds) {
-                await updateDoc(doc(db, 'documents', docId), {
-                    sourceId: mvtDocRef.id,
-                    sourceType: `cca_${formType}`,
-                }).catch(() => {});
-            }
+            const nouveauMvt = {
+                id: mvtDocRef.id,
+                associeId: formAssocieId,
+                associeNom: nomAssocie,
+                type: formType,
+                montant: montantNum,
+                dateMouvement: new Date(formDate),
+                description: formDescription.trim(),
+                taux: formTaux ? parseFloat(formTaux) : null,
+                documentIds: formDocIds,
+                ecritureId,
+            };
 
-            // Mettre à jour le taux conventionnel par défaut de l'associé s'il a été renseigné
-            if (formTaux && parseFloat(formTaux) >= 0) {
-                await updateDoc(doc(db, 'associes', formAssocieId), {
-                    tauxInteretCCA: parseFloat(formTaux),
-                    updatedAt: serverTimestamp(),
-                });
-            }
+            setMouvements((prev) => {
+                const next = [nouveauMvt, ...prev];
+                setCached('ccaMouvements', next);
+                return next;
+            });
 
             setFormSuccess(`Opération de ${formType === 'apport' ? 'l\'apport' : 'remboursement'} enregistrée avec succès.`);
             setFormMontant('');
             setFormDescription('');
             setFormDocIds([]);
             setShowFormMvt(false);
-            loadData();
         } catch (err) {
             setFormError(err.message || 'Erreur lors de l\'enregistrement.');
         } finally {
