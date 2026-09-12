@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
     onAuthStateChanged,
     signInWithEmailAndPassword,
+    signInWithCustomToken,
     signInWithPopup,
     GoogleAuthProvider,
     signOut,
@@ -23,7 +24,32 @@ export function AuthProvider({ children }) {
         return unsub;
     }, []);
 
-    const login = (email, password) => signInWithEmailAndPassword(auth, email, password);
+    const login = async (email, password) => {
+        // 1. Tenter la connexion sécurisée via Netlify Function (/api/login)
+        // avec vérification des identifiants privés (.env.local / Netlify)
+        try {
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            });
+            const data = await res.json();
+            if (res.ok && data.customToken) {
+                return await signInWithCustomToken(auth, data.customToken);
+            }
+            if (res.status === 401) {
+                throw new Error(data.error || 'Email ou mot de passe incorrect');
+            }
+        } catch (err) {
+            if (err.message.includes('incorrect')) {
+                throw err;
+            }
+        }
+
+        // 2. Fallback Firebase direct
+        return signInWithEmailAndPassword(auth, email, password);
+    };
+
     const loginGoogle = () => signInWithPopup(auth, googleProvider);
     const logout = () => signOut(auth);
 
@@ -35,4 +61,5 @@ export function AuthProvider({ children }) {
 }
 
 export const useAuth = () => useContext(AuthContext);
+
 
