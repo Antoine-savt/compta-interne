@@ -139,9 +139,12 @@ export const handler = async (event) => {
         };
     } catch (err) {
         console.error('[ecrireEcriture] Firestore error:', err);
-        const errMsg = err.message?.includes('Cloud Firestore API')
-            ? 'La base Cloud Firestore n\'est pas encore activée sur votre projet Google compta-4f163. Rendez-vous sur https://console.firebase.google.com/project/compta-4f163/firestore pour la créer.'
-            : (err.message || 'Erreur serveur lors de l\'écriture en base.');
+        let errMsg = err.message || 'Erreur serveur lors de l\'écriture en base.';
+        if (err.code === 5 || err.message?.includes('NOT_FOUND')) {
+            errMsg = 'La base de données Firestore n\'est pas encore initialisée. Rendez-vous sur https://console.firebase.google.com/project/compta-4f163/firestore et cliquez sur « Créer une base de données ».';
+        } else if (err.code === 7 || err.message?.includes('Cloud Firestore API')) {
+            errMsg = 'La base Cloud Firestore n\'est pas encore activée sur votre projet Google compta-4f163. Rendez-vous sur https://console.firebase.google.com/project/compta-4f163/firestore pour la créer.';
+        }
         return {
             statusCode: 500,
             body: JSON.stringify({ ok: false, error: errMsg }),
