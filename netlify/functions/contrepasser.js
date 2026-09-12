@@ -126,9 +126,12 @@ export const handler = async (event) => {
         };
     } catch (err) {
         console.error('[contrepasser] error:', err);
+        const errMsg = err.message?.includes('Cloud Firestore API')
+            ? 'La base Cloud Firestore n\'est pas encore activée sur votre projet Google compta-4f163. Rendez-vous sur https://console.firebase.google.com/project/compta-4f163/firestore pour la créer.'
+            : (err.message || 'Erreur serveur lors de la contre-passation.');
         return {
             statusCode: 500,
-            body: JSON.stringify({ ok: false, error: 'Erreur serveur lors de la contre-passation.' }),
+            body: JSON.stringify({ ok: false, error: errMsg }),
         };
     }
 };
