@@ -1,4 +1,4 @@
-﻿/**
+/**
  * FicheClient.jsx — v2
  * + Coût par client (dépenses rattachées)
  * + Marge brute (%)
@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { formatMontant, formatDate } from '../services/helpers';
+import { getCached, setCached } from '../services/dataCache';
 
 function Spinner() {
     return (
@@ -33,34 +34,50 @@ export default function FicheClient() {
     const { clientId } = useParams();
     const navigate = useNavigate();
 
-    const [client, setClient] = useState(null);
-    const [categories, setCategories] = useState([]);
+    const [client, setClient] = useState(() => {
+        const cached = getCached('clients');
+        return cached?.find((c) => c.id === clientId) || null;
+    });
+    const [categories, setCategories] = useState(() => getCached('categoriesClient') || []);
     const [versements, setVersements] = useState([]);  // versements Stripe legacy
     const [facturations, setFacturations] = useState([]);  // nouvelles facturations
     const [depenses, setDepenses] = useState([]);  // dépenses liées
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => {
+        const cached = getCached('clients');
+        return !cached?.some((c) => c.id === clientId);
+    });
     const [edit, setEdit] = useState(false);
-    const [form, setForm] = useState({});
+    const [form, setForm] = useState(() => {
+        const cached = getCached('clients');
+        return cached?.find((c) => c.id === clientId) || {};
+    });
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
         async function load() {
-            const [cliSnap, catSnap, versSnap, factSnap, depSnap] = await Promise.all([
-                getDoc(doc(db, 'clients', clientId)),
-                getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
-                getDocs(query(collection(db, 'versementsStripe'), where('clientId', '==', clientId), orderBy('dateVirement', 'desc'))),
-                getDocs(query(collection(db, 'facturations'), where('clientId', '==', clientId), orderBy('date', 'desc'))),
-                getDocs(query(collection(db, 'depenses'), where('clientId', '==', clientId))),
-            ]);
-            if (!cliSnap.exists()) { navigate('/clients'); return; }
-            const cli = { id: cliSnap.id, ...cliSnap.data() };
-            setClient(cli);
-            setForm(cli);
-            setCategories(catSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setVersements(versSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setFacturations(factSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setDepenses(depSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setLoading(false);
+            try {
+                const [cliSnap, catSnap, versSnap, factSnap, depSnap] = await Promise.all([
+                    getDoc(doc(db, 'clients', clientId)),
+                    getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
+                    getDocs(query(collection(db, 'versementsStripe'), where('clientId', '==', clientId), orderBy('dateVirement', 'desc'))),
+                    getDocs(query(collection(db, 'facturations'), where('clientId', '==', clientId), orderBy('date', 'desc'))),
+                    getDocs(query(collection(db, 'depenses'), where('clientId', '==', clientId))),
+                ]);
+                if (!cliSnap.exists()) { navigate('/clients'); return; }
+                const cli = { id: cliSnap.id, ...cliSnap.data() };
+                setClient(cli);
+                setForm(cli);
+                const cats = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                setCategories(cats);
+                setCached('categoriesClient', cats);
+                setVersements(versSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+                setFacturations(factSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+                setDepenses(depSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+            } catch (err) {
+                console.error('Erreur chargement fiche client:', err);
+            } finally {
+                setLoading(false);
+            }
         }
         load();
     }, [clientId, navigate]);

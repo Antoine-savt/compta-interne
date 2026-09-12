@@ -16,6 +16,7 @@ import {
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
 import { formatMontant, formatDate } from '../services/helpers';
+import { getCached, setCached } from '../services/dataCache';
 
 const ROLES = {
     president: 'Président',
@@ -27,12 +28,18 @@ export default function FicheAssocie() {
     const { associeId } = useParams();
     const navigate = useNavigate();
 
-    const [associe, setAssocie] = useState(null);
+    const [associe, setAssocie] = useState(() => {
+        const cached = getCached('associes');
+        return cached?.find((a) => a.id === associeId) || null;
+    });
     const [avances, setAvances] = useState([]);
     const [dividendes, setDividendes] = useState([]);
     const [ccaMouvements, setCcaMouvements] = useState([]);
     const [documents, setDocuments] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => {
+        const cached = getCached('associes');
+        return !cached?.some((a) => a.id === associeId);
+    });
     const [saving, setSaving] = useState('');
 
     const load = useCallback(async () => {

@@ -15,20 +15,23 @@ import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getEcrituresActives, calculerGrandLivre, calculerCompteResultat } from '../services/comptaService';
 import { formatMontant, formatDate } from '../services/helpers';
+import { getCached, setCached } from '../services/dataCache';
 
 export default function Overview() {
     const navigate = useNavigate();
-    const [ecritures, setEcritures] = useState([]);
-    const [associes, setAssocies] = useState([]);
-    const [ccaMouvements, setCcaMouvements] = useState([]);
-    const [avances, setAvances] = useState([]);
-    const [clients, setClients] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [ecritures, setEcritures] = useState(() => getCached('overview_ecritures') || []);
+    const [associes, setAssocies] = useState(() => getCached('associes') || []);
+    const [ccaMouvements, setCcaMouvements] = useState(() => getCached('ccaMouvements') || []);
+    const [avances, setAvances] = useState(() => getCached('avancesFrags') || []);
+    const [clients, setClients] = useState(() => getCached('clients') || []);
+    const [loading, setLoading] = useState(() => !getCached('overview_ecritures'));
 
     const anneeCourante = new Date().getFullYear();
 
     const loadData = useCallback(async () => {
-        setLoading(true);
+        if (!getCached('overview_ecritures')) {
+            setLoading(true);
+        }
         try {
             const [ecrData, assSnap, ccaSnap, avSnap, cliSnap] = await Promise.all([
                 getEcrituresActives({ dateDebut: `${anneeCourante}-01-01` }),
@@ -38,11 +41,22 @@ export default function Overview() {
                 getDocs(collection(db, 'clients')),
             ]);
 
+            const assList = assSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const ccaList = ccaSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const avList = avSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const cliList = cliSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
             setEcritures(ecrData);
-            setAssocies(assSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setCcaMouvements(ccaSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setAvances(avSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setClients(cliSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+            setAssocies(assList);
+            setCcaMouvements(ccaList);
+            setAvances(avList);
+            setClients(cliList);
+
+            setCached('overview_ecritures', ecrData);
+            setCached('associes', assList);
+            setCached('ccaMouvements', ccaList);
+            setCached('avancesFrags', avList);
+            setCached('clients', cliList);
         } catch (err) {
             console.error('Erreur chargement Overview:', err);
         } finally {

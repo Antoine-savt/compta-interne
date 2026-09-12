@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CategoriesClient.jsx  CRUD des catégories de clients
  * Créer, renommer, supprimer, réordonner, couleur par catégorie
  * Vue récapitulative : nombre de clients + total encaissé par catégorie
@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { formatMontant } from '../services/helpers';
+import { getCached, setCached, invalidateCache } from '../services/dataCache';
 
 const COULEURS_PRESET = [
     '#4f6ff0', '#22c55e', '#f59e0b', '#ef4444', '#38bdf8',
@@ -19,10 +20,10 @@ const COULEURS_PRESET = [
 
 export default function CategoriesClient() {
     const navigate = useNavigate();
-    const [categories, setCategories] = useState([]);
-    const [clients, setClients] = useState([]);
-    const [versements, setVersements] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [categories, setCategories] = useState(() => getCached('categoriesClient') || []);
+    const [clients, setClients] = useState(() => getCached('clients') || []);
+    const [versements, setVersements] = useState(() => getCached('versementsStripe') || []);
+    const [loading, setLoading] = useState(() => !getCached('categoriesClient'));
 
     // Formulaire ajout / édition
     const [editId, setEditId] = useState(null); // null = nouveau
@@ -32,15 +33,27 @@ export default function CategoriesClient() {
     const [saving, setSaving] = useState(false);
 
     async function load() {
-        const [catSnap, cliSnap, versSnap] = await Promise.all([
-            getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
-            getDocs(collection(db, 'clients')),
-            getDocs(collection(db, 'versementsStripe')),
-        ]);
-        setCategories(catSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setClients(cliSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setVersements(versSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
+        try {
+            const [catSnap, cliSnap, versSnap] = await Promise.all([
+                getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
+                getDocs(collection(db, 'clients')),
+                getDocs(collection(db, 'versementsStripe')),
+            ]);
+            const cats = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const clis = cliSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const vers = versSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+            setCategories(cats);
+            setClients(clis);
+            setVersements(vers);
+
+            setCached('categoriesClient', cats);
+            setCached('versementsStripe', vers);
+        } catch (err) {
+            console.error('Erreur chargement categories:', err);
+        } finally {
+            setLoading(false);
+        }
     }
 
     useEffect(() => { load(); }, []);

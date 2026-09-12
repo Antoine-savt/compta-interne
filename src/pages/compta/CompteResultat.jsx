@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, calculerCompteResultat } from '../../services/comptaService';
+import { getEcrituresActives, calculerCompteResultat, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant } from '../../services/helpers';
 
 export default function CompteResultat() {
@@ -15,11 +15,13 @@ export default function CompteResultat() {
     const [dateDebut, setDateDebut] = useState(`${anneeCourante}-01-01`);
     const [dateFin, setDateFin] = useState(new Date().toISOString().split('T')[0]);
     const [ecritures, setEcritures] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !hasEcrituresCache());
     const [detailComptes, setDetailComptes] = useState(true);
 
     const loadData = useCallback(async () => {
-        setLoading(true);
+        if (!hasEcrituresCache()) {
+            setLoading(true);
+        }
         try {
             const data = await getEcrituresActives({ dateDebut, dateFin });
             setEcritures(data);

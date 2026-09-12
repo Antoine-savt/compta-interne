@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, calculerBalance, telechargerFichier } from '../../services/comptaService';
+import { getEcrituresActives, calculerBalance, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant } from '../../services/helpers';
 
 export default function BalanceGenerale() {
@@ -23,10 +23,12 @@ export default function BalanceGenerale() {
     const [dateFin, setDateFin] = useState(new Date().toISOString().split('T')[0]);
     const [classeFiltre, setClasseFiltre] = useState(''); // '' | '1' | '2' | '3' | '4' | '5' | '6' | '7'
     const [ecritures, setEcritures] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !hasEcrituresCache());
 
     const loadData = useCallback(async () => {
-        setLoading(true);
+        if (!hasEcrituresCache()) {
+            setLoading(true);
+        }
         try {
             const data = await getEcrituresActives({ dateDebut, dateFin });
             setEcritures(data);

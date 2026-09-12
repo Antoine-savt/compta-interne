@@ -101,33 +101,63 @@ export function getLibelleCompte(code) {
 
 // ─── Chargement des écritures ───────────────────────────────────────────────
 
+let _ecrituresCache = null;
+let _ecrituresTimestamp = 0;
+const ECRITURES_TTL_MS = 60 * 1000; // 60 secondes
+
 /**
- * Récupère toutes les écritures actives.
+ * Invalide le cache mémoire des écritures comptables.
+ */
+export function invalidateEcrituresCache() {
+    _ecrituresCache = null;
+    _ecrituresTimestamp = 0;
+}
+
+/**
+ * Indique si le cache mémoire des écritures est chaud.
+ * @returns {boolean}
+ */
+export function hasEcrituresCache() {
+    return _ecrituresCache !== null;
+}
+
+/**
+ * Récupère toutes les écritures actives (avec cache mémoire ultra-rapide).
  * @param {Object} [filtres]
  * @param {Date|string} [filtres.dateDebut]
  * @param {Date|string} [filtres.dateFin]
  * @param {string} [filtres.journal]
+ * @param {Object} [options]
+ * @param {boolean} [options.forceRefresh]
  */
-export async function getEcrituresActives(filtres = {}) {
-    const q = query(
-        collection(db, 'ecritures'),
-        where('statut', '==', 'active')
-    );
+export async function getEcrituresActives(filtres = {}, options = {}) {
+    const now = Date.now();
+    let rawEcritures = _ecrituresCache;
 
-    const snap = await getDocs(q);
-    let ecritures = snap.docs.map((d) => {
-        const data = d.data();
-        const dateObj = data.date?.toDate ? data.date.toDate() : new Date(data.date);
-        return {
-            id: d.id,
-            ...data,
-            dateObj,
-            dateStr: isNaN(dateObj.getTime()) ? '' : dateObj.toISOString().split('T')[0],
-        };
-    });
+    if (!rawEcritures || options.forceRefresh || (now - _ecrituresTimestamp > ECRITURES_TTL_MS)) {
+        const q = query(
+            collection(db, 'ecritures'),
+            where('statut', '==', 'active')
+        );
+        const snap = await getDocs(q);
+        rawEcritures = snap.docs.map((d) => {
+            const data = d.data();
+            const dateObj = data.date?.toDate ? data.date.toDate() : new Date(data.date);
+            return {
+                id: d.id,
+                ...data,
+                dateObj,
+                dateStr: isNaN(dateObj.getTime()) ? '' : dateObj.toISOString().split('T')[0],
+            };
+        });
 
-    // Tri chronologique
-    ecritures.sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
+        // Tri chronologique
+        rawEcritures.sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
+        _ecrituresCache = rawEcritures;
+        _ecrituresTimestamp = now;
+    }
+
+    let ecritures = [...rawEcritures];
 
     // Filtrage en mémoire
     if (filtres.dateDebut) {

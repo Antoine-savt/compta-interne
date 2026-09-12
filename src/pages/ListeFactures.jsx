@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Liste des factures avec statut, total, et détail comptable dépliable
  */
 import { useState, useEffect } from 'react';
@@ -7,14 +7,17 @@ import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
 import { formatMontant, formatDate } from '../services/helpers';
 import { DetailComptable } from '../components/DetailComptable';
+import { getCached, setCached } from '../services/dataCache';
 
 export default function ListeFactures() {
-    const [factures, setFactures] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [factures, setFactures] = useState(() => getCached('factures') || []);
+    const [loading, setLoading] = useState(() => !getCached('factures'));
 
     useEffect(() => {
         getDocs(query(collection(db, 'factures'), orderBy('createdAt', 'desc'))).then((snap) => {
-            setFactures(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+            const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            setFactures(list);
+            setCached('factures', list);
             setLoading(false);
         });
     }, []);

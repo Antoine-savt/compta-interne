@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, genererFEC, telechargerFichier } from '../../services/comptaService';
+import { getEcrituresActives, genererFEC, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate } from '../../services/helpers';
 
 const JOURNAUX = [
@@ -24,11 +24,13 @@ export default function Journaux() {
     const [dateFin, setDateFin] = useState(new Date().toISOString().split('T')[0]);
     const [codeJournal, setCodeJournal] = useState('');
     const [ecritures, setEcritures] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !hasEcrituresCache());
     const [siren, setSiren] = useState('123456789');
 
     const loadData = useCallback(async () => {
-        setLoading(true);
+        if (!hasEcrituresCache()) {
+            setLoading(true);
+        }
         try {
             const data = await getEcrituresActives({ dateDebut, dateFin, journal: codeJournal || undefined });
             setEcritures(data);

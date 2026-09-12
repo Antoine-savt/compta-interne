@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, calculerGrandLivre, telechargerFichier } from '../../services/comptaService';
+import { getEcrituresActives, calculerGrandLivre, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate } from '../../services/helpers';
 
 export default function GrandLivre() {
@@ -22,10 +22,12 @@ export default function GrandLivre() {
     const [compteFiltre, setCompteFiltre] = useState('');
     const [recherche, setRecherche] = useState('');
     const [ecritures, setEcritures] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !hasEcrituresCache());
 
     const loadData = useCallback(async () => {
-        setLoading(true);
+        if (!hasEcrituresCache()) {
+            setLoading(true);
+        }
         try {
             const data = await getEcrituresActives({ dateDebut, dateFin, journal: journalFiltre || undefined });
             setEcritures(data);

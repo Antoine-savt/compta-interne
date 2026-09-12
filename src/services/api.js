@@ -3,6 +3,8 @@
  * Elle récupère le token Firebase courant et appelle les Netlify Functions.
  */
 import { auth } from '../firebase';
+import { invalidateEcrituresCache } from './comptaService';
+import { invalidateCache } from './dataCache';
 
 async function getToken() {
     const user = auth.currentUser;
@@ -26,6 +28,9 @@ export async function ecrireEcriture(ecritureInput) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? 'Erreur lors de l\'écriture comptable');
+    // Invalider les caches pour refléter immédiatement les nouveaux chiffres
+    invalidateEcrituresCache();
+    invalidateCache('overview_ecritures');
     return data;
 }
 
@@ -44,5 +49,7 @@ export async function contrepasser(ecritureId, motif) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? 'Erreur lors de la contre-passation');
+    invalidateEcrituresCache();
+    invalidateCache('overview_ecritures');
     return data;
 }

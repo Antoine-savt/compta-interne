@@ -35,7 +35,11 @@ function InitData() {
     useEffect(() => {
         if (user && !initialized) {
             initialized = true;
-            initDefaultData().catch(console.error);
+            if (!sessionStorage.getItem('wheeloh_init_done')) {
+                initDefaultData()
+                    .then(() => sessionStorage.setItem('wheeloh_init_done', '1'))
+                    .catch(console.error);
+            }
         }
     }, [user]);
     return null;

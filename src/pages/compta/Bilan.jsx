@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, calculerBilan } from '../../services/comptaService';
+import { getEcrituresActives, calculerBilan, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate } from '../../services/helpers';
 
 export default function Bilan() {
@@ -16,11 +16,13 @@ export default function Bilan() {
     const [dateDebut, setDateDebut] = useState(`${anneeCourante}-01-01`);
     const [dateFin, setDateFin] = useState(new Date().toISOString().split('T')[0]);
     const [ecritures, setEcritures] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !hasEcrituresCache());
     const [detailComptes, setDetailComptes] = useState(true);
 
     const loadData = useCallback(async () => {
-        setLoading(false);
+        if (!hasEcrituresCache()) {
+            setLoading(true);
+        }
         try {
             const data = await getEcrituresActives({ dateDebut, dateFin });
             setEcritures(data);

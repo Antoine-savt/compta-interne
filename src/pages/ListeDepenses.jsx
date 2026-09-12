@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Liste des dépenses avec statut, montant, et détail comptable dépliable
  */
 import { useState, useEffect } from 'react';
@@ -7,14 +7,17 @@ import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
 import { formatMontant, formatDate } from '../services/helpers';
 import { DetailComptable } from '../components/DetailComptable';
+import { getCached, setCached } from '../services/dataCache';
 
 export default function ListeDepenses() {
-    const [depenses, setDepenses] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [depenses, setDepenses] = useState(() => getCached('depenses') || []);
+    const [loading, setLoading] = useState(() => !getCached('depenses'));
 
     useEffect(() => {
         getDocs(query(collection(db, 'depenses'), orderBy('createdAt', 'desc'))).then((snap) => {
-            setDepenses(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+            const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            setDepenses(list);
+            setCached('depenses', list);
             setLoading(false);
         });
     }, []);

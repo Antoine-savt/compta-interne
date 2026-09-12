@@ -19,16 +19,17 @@ import { ecrireEcriture } from '../services/api';
 import { formatMontant, formatDate } from '../services/helpers';
 import { FileUpload } from '../components/FileUpload';
 import { Tooltip } from '../components/Shared';
+import { getCached, setCached } from '../services/dataCache';
 
 // Taux légal maximum d'intérêts déductibles pour les CCA (seuil d'alerte configuré à 4.00%)
 const TAUX_LEGAL_DEFECT_2026 = 4.00;
 
 export default function ComptesCourants() {
-    const [associes, setAssocies] = useState([]);
-    const [mouvements, setMouvements] = useState([]);
-    const [avances, setAvances] = useState([]);
-    const [documents, setDocuments] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [associes, setAssocies] = useState(() => getCached('associes') || []);
+    const [mouvements, setMouvements] = useState(() => getCached('ccaMouvements') || []);
+    const [avances, setAvances] = useState(() => getCached('avancesFrags') || []);
+    const [documents, setDocuments] = useState(() => getCached('documents') || []);
+    const [loading, setLoading] = useState(() => !getCached('associes'));
 
     // Onglet actif
     const [activeTab, setActiveTab] = useState('synthese'); // 'synthese' | 'mouvements' | 'interets'
@@ -60,7 +61,9 @@ export default function ComptesCourants() {
 
     // Chargement des données
     const loadData = useCallback(async () => {
-        setLoading(true);
+        if (!getCached('associes')) {
+            setLoading(true);
+        }
         try {
             const [assSnap, mvtSnap, avSnap, docSnap] = await Promise.all([
                 getDocs(query(collection(db, 'associes'), orderBy('nom'))),
@@ -70,11 +73,19 @@ export default function ComptesCourants() {
             ]);
 
             const assList = assSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-            setAssocies(assList);
+            const mvtList = mvtSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const avList = avSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const docList = docSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-            setMouvements(mvtSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setAvances(avSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-            setDocuments(docSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+            setAssocies(assList);
+            setMouvements(mvtList);
+            setAvances(avList);
+            setDocuments(docList);
+
+            setCached('associes', assList);
+            setCached('ccaMouvements', mvtList);
+            setCached('avancesFrags', avList);
+            setCached('documents', docList);
 
             if (assList.length > 0 && !formAssocieId) {
                 setFormAssocieId(assList[0].id);

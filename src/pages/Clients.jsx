@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Clients.jsx  Page liste des clients
  * Filtre par catégorie + recherche par nom
  * Total encaissé Stripe + abonnement mensuel estimé par client
@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { formatMontant } from '../services/helpers';
+import { getCached, setCached } from '../services/dataCache';
 
 function Spinner() {
     return (
@@ -29,9 +30,9 @@ function Spinner() {
 
 export default function Clients() {
     const navigate = useNavigate();
-    const [clients, setClients] = useState([]);
-    const [categories, setCategories] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [clients, setClients] = useState(() => getCached('clients') || []);
+    const [categories, setCategories] = useState(() => getCached('categoriesClient') || []);
+    const [loading, setLoading] = useState(() => !getCached('clients'));
     const [search, setSearch] = useState('');
     const [catFiltreId, setCatFiltreId] = useState('');
     const [showNew, setShowNew] = useState(false);
@@ -39,40 +40,46 @@ export default function Clients() {
     const [saving, setSaving] = useState(false);
 
     const load = useCallback(async () => {
-        const [cliSnap, catSnap] = await Promise.all([
-            getDocs(query(collection(db, 'clients'), orderBy('nom'))),
-            getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
-        ]);
-        const cats = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setCategories(cats);
+        try {
+            // Requêtes exécutées en parallèle en une seule passe
+            const [cliSnap, catSnap, versSnap] = await Promise.all([
+                getDocs(query(collection(db, 'clients'), orderBy('nom'))),
+                getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
+                getDocs(collection(db, 'versementsStripe')),
+            ]);
 
-        // Charger les totaux Stripe par client (seulement les docs avec clientId)
-        const versSnap = await getDocs(
-            query(collection(db, 'versementsStripe'), where('clientId', '!=', null))
-        );
-        const totauxParClient = {};
-        const abosParClient = {};
-        versSnap.docs.forEach((d) => {
-            const v = d.data();
-            if (!v.clientId) return;
-            totauxParClient[v.clientId] = (totauxParClient[v.clientId] ?? 0) + (v.montantBrut ?? 0);
-            if (v.recurrence?.type === 'recurrent' && v.abonnementMensuelEstime) {
-                abosParClient[v.clientId] = Math.max(
-                    abosParClient[v.clientId] ?? 0,
-                    v.abonnementMensuelEstime
-                );
-            }
-        });
+            const cats = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            setCategories(cats);
+            setCached('categoriesClient', cats);
 
-        setClients(
-            cliSnap.docs.map((d) => ({
+            const totauxParClient = {};
+            const abosParClient = {};
+            versSnap.docs.forEach((d) => {
+                const v = d.data();
+                if (!v.clientId) return;
+                totauxParClient[v.clientId] = (totauxParClient[v.clientId] ?? 0) + (v.montantBrut ?? 0);
+                if (v.recurrence?.type === 'recurrent' && v.abonnementMensuelEstime) {
+                    abosParClient[v.clientId] = Math.max(
+                        abosParClient[v.clientId] ?? 0,
+                        v.abonnementMensuelEstime
+                    );
+                }
+            });
+
+            const clientsList = cliSnap.docs.map((d) => ({
                 id: d.id,
                 ...d.data(),
                 totalEncaisse: totauxParClient[d.id] ?? 0,
                 abonnementMensuel: abosParClient[d.id] ?? (d.data().abonnementMensuelManuel ?? 0),
-            }))
-        );
-        setLoading(false);
+            }));
+
+            setClients(clientsList);
+            setCached('clients', clientsList);
+        } catch (err) {
+            console.error('Erreur chargement clients:', err);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => { load(); }, [load]);

@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { formatMontant } from '../services/helpers';
+import { getCached, setCached } from '../services/dataCache';
 
 const ROLES = [
     { value: 'president', label: 'Président' },
@@ -28,10 +29,10 @@ const FORM_VIDE = {
 
 export default function Associes() {
     const navigate = useNavigate();
-    const [associes, setAssocies] = useState([]);
-    const [avances, setAvances] = useState([]);
-    const [ccaMouvements, setCcaMouvements] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [associes, setAssocies] = useState(() => getCached('associes') || []);
+    const [avances, setAvances] = useState(() => getCached('avancesFrags') || []);
+    const [ccaMouvements, setCcaMouvements] = useState(() => getCached('ccaMouvements') || []);
+    const [loading, setLoading] = useState(() => !getCached('associes'));
     const [showForm, setShowForm] = useState(false);
     const [editId, setEditId] = useState(null);
     const [form, setForm] = useState(FORM_VIDE);
@@ -39,15 +40,28 @@ export default function Associes() {
     const [error, setError] = useState('');
 
     const load = useCallback(async () => {
-        const [assSnap, avSnap, ccaSnap] = await Promise.all([
-            getDocs(query(collection(db, 'associes'), orderBy('createdAt'))),
-            getDocs(collection(db, 'avancesFrags')),
-            getDocs(collection(db, 'ccaMouvements')),
-        ]);
-        setAssocies(assSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setAvances(avSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setCcaMouvements(ccaSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
+        try {
+            const [assSnap, avSnap, ccaSnap] = await Promise.all([
+                getDocs(query(collection(db, 'associes'), orderBy('createdAt'))),
+                getDocs(collection(db, 'avancesFrags')),
+                getDocs(collection(db, 'ccaMouvements')),
+            ]);
+            const assList = assSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const avList = avSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const ccaList = ccaSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+            setAssocies(assList);
+            setAvances(avList);
+            setCcaMouvements(ccaList);
+
+            setCached('associes', assList);
+            setCached('avancesFrags', avList);
+            setCached('ccaMouvements', ccaList);
+        } catch (err) {
+            console.error('Erreur chargement associés:', err);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => { load(); }, [load]);
