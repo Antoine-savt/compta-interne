@@ -12,8 +12,12 @@ import { getAuth } from 'firebase-admin/auth';
 
 function getAdminApp() {
     if (getApps().length > 0) return getApps()[0];
+    const b64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+    if (!b64) {
+        throw new Error('La variable d\'environnement FIREBASE_SERVICE_ACCOUNT_BASE64 est absente dans Netlify.');
+    }
     const serviceAccount = JSON.parse(
-        Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8')
+        Buffer.from(b64, 'base64').toString('utf8')
     );
     return initializeApp({ credential: cert(serviceAccount) });
 }
@@ -47,18 +51,10 @@ export async function handler(event) {
         };
     }
 
-    const adminEmail = process.env.ADMIN_EMAIL || process.env.VITE_ADMIN_EMAIL;
-    const adminPassword = process.env.ADMIN_PASSWORD;
+    // Identifiants configurés dans Netlify/env, avec compte administrateur initial
+    const adminEmail = (process.env.ADMIN_EMAIL || process.env.VITE_ADMIN_EMAIL || 'antoine.savoyant@gmail.com').trim().toLowerCase();
+    const adminPassword = process.env.ADMIN_PASSWORD || 'Compta2026!';
 
-    if (!adminEmail || !adminPassword) {
-        return {
-            statusCode: 500,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                error: 'Identifiants admin non configurés dans les variables d\'environnement (ADMIN_EMAIL, ADMIN_PASSWORD)',
-            }),
-        };
-    }
 
     // Vérification stricte des identifiants privés
     if (email.trim().toLowerCase() !== adminEmail.trim().toLowerCase() || password !== adminPassword) {

@@ -25,29 +25,16 @@ export function AuthProvider({ children }) {
     }, []);
 
     const login = async (email, password) => {
-        // 1. Tenter la connexion sécurisée via Netlify Function (/api/login)
-        // avec vérification des identifiants privés (.env.local / Netlify)
-        try {
-            const res = await fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password }),
-            });
-            const data = await res.json();
-            if (res.ok && data.customToken) {
-                return await signInWithCustomToken(auth, data.customToken);
-            }
-            if (res.status === 401) {
-                throw new Error(data.error || 'Email ou mot de passe incorrect');
-            }
-        } catch (err) {
-            if (err.message.includes('incorrect')) {
-                throw err;
-            }
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (res.ok && data.customToken) {
+            return await signInWithCustomToken(auth, data.customToken);
         }
-
-        // 2. Fallback Firebase direct
-        return signInWithEmailAndPassword(auth, email, password);
+        throw new Error(data.error || 'Email ou mot de passe incorrect.');
     };
 
     const loginGoogle = () => signInWithPopup(auth, googleProvider);
