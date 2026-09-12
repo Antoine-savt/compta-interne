@@ -1,0 +1,26 @@
+{
+    "name": "compta-interne",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "test": "node netlify/functions/__tests__/gardefou.test.js"
+    },
+    "dependencies": {
+        "firebase": "^10.14.0",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "react-router-dom": "^6.28.0",
+        "react-dropzone": "^14.3.5",
+        "date-fns": "^3.6.0"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-react": "^4.3.3",
+        "vite": "^5.4.10",
+        "netlify-cli": "^17.37.2",
+        "firebase-admin": "^12.7.0"
+    }
+}

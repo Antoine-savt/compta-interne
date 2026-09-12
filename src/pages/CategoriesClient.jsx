@@ -1,0 +1,233 @@
+﻿/**
+ * CategoriesClient.jsx  CRUD des catégories de clients
+ * Créer, renommer, supprimer, réordonner, couleur par catégorie
+ * Vue récapitulative : nombre de clients + total encaissé par catégorie
+ */
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+    collection, query, orderBy, getDocs,
+    addDoc, doc, updateDoc, deleteDoc, serverTimestamp,
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import { formatMontant } from '../services/helpers';
+
+const COULEURS_PRESET = [
+    '#4f6ff0', '#22c55e', '#f59e0b', '#ef4444', '#38bdf8',
+    '#a855f7', '#ec4899', '#14b8a6', '#fb923c', '#6366f1',
+];
+
+export default function CategoriesClient() {
+    const navigate = useNavigate();
+    const [categories, setCategories] = useState([]);
+    const [clients, setClients] = useState([]);
+    const [versements, setVersements] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    // Formulaire ajout / édition
+    const [editId, setEditId] = useState(null); // null = nouveau
+    const [formNom, setFormNom] = useState('');
+    const [formCoul, setFormCoul] = useState(COULEURS_PRESET[0]);
+    const [showForm, setShowForm] = useState(false);
+    const [saving, setSaving] = useState(false);
+
+    async function load() {
+        const [catSnap, cliSnap, versSnap] = await Promise.all([
+            getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
+            getDocs(collection(db, 'clients')),
+            getDocs(collection(db, 'versementsStripe')),
+        ]);
+        setCategories(catSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setClients(cliSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setVersements(versSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+    }
+
+    useEffect(() => { load(); }, []);
+
+    // Agrégats par catégorie
+    function stats(catId) {
+        const cliIds = clients.filter((c) => c.categorieId === catId).map((c) => c.id);
+        const nbClients = cliIds.length;
+        const totalEnc = versements
+            .filter((v) => cliIds.includes(v.clientId))
+            .reduce((s, v) => s + (v.montantBrut ?? 0), 0);
+        return { nbClients, totalEnc };
+    }
+
+    function startEdit(cat) {
+        setEditId(cat.id);
+        setFormNom(cat.nom);
+        setFormCoul(cat.couleur ?? COULEURS_PRESET[0]);
+        setShowForm(true);
+    }
+
+    function startNew() {
+        setEditId(null);
+        setFormNom('');
+        setFormCoul(COULEURS_PRESET[categories.length % COULEURS_PRESET.length]);
+        setShowForm(true);
+    }
+
+    async function handleSave() {
+        if (!formNom.trim()) return;
+        setSaving(true);
+        if (editId) {
+            await updateDoc(doc(db, 'categoriesClient', editId), {
+                nom: formNom.trim(), couleur: formCoul, updatedAt: serverTimestamp(),
+            });
+        } else {
+            await addDoc(collection(db, 'categoriesClient'), {
+                nom: formNom.trim(), couleur: formCoul,
+                ordre: categories.length + 1,
+                createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+            });
+        }
+        setShowForm(false); setSaving(false);
+        load();
+    }
+
+    async function handleDelete(catId) {
+        const { nbClients } = stats(catId);
+        if (nbClients > 0) {
+            const ok = window.confirm(`Cette catégorie contient ${nbClients} client(s). Ils seront mis en "Non catégorisé". Continuer ?`);
+            if (!ok) return;
+            // Mettre à jour les clients rattachés
+            for (const c of clients.filter((c) => c.categorieId === catId)) {
+                await updateDoc(doc(db, 'clients', c.id), { categorieId: null, categorieNom: null, updatedAt: serverTimestamp() });
+            }
+        }
+        await deleteDoc(doc(db, 'categoriesClient', catId));
+        load();
+    }
+
+    async function moveUp(idx) {
+        if (idx === 0) return;
+        const updated = [...categories];
+        [updated[idx - 1], updated[idx]] = [updated[idx], updated[idx - 1]];
+        await Promise.all(updated.map((c, i) => updateDoc(doc(db, 'categoriesClient', c.id), { ordre: i + 1 })));
+        load();
+    }
+
+    async function moveDown(idx) {
+        if (idx === categories.length - 1) return;
+        const updated = [...categories];
+        [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
+        await Promise.all(updated.map((c, i) => updateDoc(doc(db, 'categoriesClient', c.id), { ordre: i + 1 })));
+        load();
+    }
+
+    const noncategorises = clients.filter((c) => !c.categorieId);
+    const totalEncNonCat = versements
+        .filter((v) => noncategorises.some((c) => c.id === v.clientId))
+        .reduce((s, v) => s + (v.montantBrut ?? 0), 0);
+
+    return (
+        <div>
+            <div className="page-header">
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                    <button className="btn btn--ghost btn--sm" onClick={() => navigate('/clients')}> Clients</button>
+                    <h1 style={{ margin: 0 }}>Catégories de clients</h1>
+                </div>
+                <div className="page-header__actions">
+                    <button className="btn btn--primary" onClick={startNew}>+ Nouvelle catégorie</button>
+                </div>
+            </div>
+
+            {/* Formulaire inline */}
+            {showForm && (
+                <div className="card" style={{ marginBottom: 16, borderColor: 'var(--border-focus)' }}>
+                    <div className="card__title">{editId ? 'Modifier la catégorie' : 'Nouvelle catégorie'}</div>
+                    <div className="form-row">
+                        <div className="form-group">
+                            <label className="form-label">Nom</label>
+                            <input type="text" className="form-input" value={formNom} onChange={(e) => setFormNom(e.target.value)} placeholder="Ex. Abonnés premium" autoFocus />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Couleur</label>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                                {COULEURS_PRESET.map((c) => (
+                                    <button
+                                        key={c} type="button"
+                                        style={{
+                                            width: 28, height: 28, borderRadius: '50%', background: c, border: 'none',
+                                            cursor: 'pointer', outline: formCoul === c ? `3px solid ${c}` : 'none',
+                                            outlineOffset: 2,
+                                        }}
+                                        onClick={() => setFormCoul(c)}
+                                    />
+                                ))}
+                                <input type="color" value={formCoul} onChange={(e) => setFormCoul(e.target.value)} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', cursor: 'pointer', padding: 0 }} title="Couleur personnalisée" />
+                            </div>
+                        </div>
+                    </div>
+                    <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ width: 14, height: 14, borderRadius: '50%', background: formCoul, display: 'inline-block', flexShrink: 0 }} />
+                        <span className="badge" style={{ background: formCoul + '22', color: formCoul, border: `1px solid ${formCoul}55` }}>{formNom || 'Aperçu'}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                        <button className="btn btn--primary btn--sm" disabled={saving || !formNom.trim()} onClick={handleSave}>{saving ? '' : editId ? 'Enregistrer' : 'Créer'}</button>
+                        <button className="btn btn--ghost btn--sm" onClick={() => setShowForm(false)}>Annuler</button>
+                    </div>
+                </div>
+            )}
+
+            {loading && <p style={{ color: 'var(--text-muted)' }}>Chargement</p>}
+
+            {/* Tableau des catégories */}
+            {!loading && (
+                <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                    <div className="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th style={{ width: 40 }}></th>
+                                    <th>Catégorie</th>
+                                    <th style={{ textAlign: 'right' }}>Clients</th>
+                                    <th style={{ textAlign: 'right' }}>Total encaissé</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {categories.map((cat, idx) => {
+                                    const { nbClients, totalEnc } = stats(cat.id);
+                                    return (
+                                        <tr key={cat.id}>
+                                            <td>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                                    <button className="btn btn--icon btn--ghost" style={{ padding: '2px 6px', fontSize: 10 }} onClick={() => moveUp(idx)} disabled={idx === 0}>▲</button>
+                                                    <button className="btn btn--icon btn--ghost" style={{ padding: '2px 6px', fontSize: 10 }} onClick={() => moveDown(idx)} disabled={idx === categories.length - 1}>▼</button>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span className="badge" style={{ background: cat.couleur + '22', color: cat.couleur, border: `1px solid ${cat.couleur}55` }}>
+                                                    {cat.nom}
+                                                </span>
+                                            </td>
+                                            <td style={{ textAlign: 'right' }}>{nbClients}</td>
+                                            <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatMontant(totalEnc)}</td>
+                                            <td>
+                                                <div style={{ display: 'flex', gap: 6 }}>
+                                                    <button className="btn btn--sm btn--ghost" onClick={() => startEdit(cat)}>Modifier</button>
+                                                    <button className="btn btn--sm btn--danger" onClick={() => handleDelete(cat.id)}>Supprimer</button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                                {/* Ligne "Non catégorisé" */}
+                                <tr style={{ opacity: 0.7 }}>
+                                    <td></td>
+                                    <td><span className="badge badge--muted">Non catégorisé</span></td>
+                                    <td style={{ textAlign: 'right' }}>{noncategorises.length}</td>
+                                    <td style={{ textAlign: 'right' }}>{formatMontant(totalEncNonCat)}</td>
+                                    <td></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
