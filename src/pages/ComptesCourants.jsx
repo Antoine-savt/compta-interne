@@ -976,16 +976,24 @@ export default function ComptesCourants() {
                                                     <td style={{ textAlign: 'center' }}>
                                                         <button
                                                             type="button"
-                                                            className="btn btn--sm btn--ghost"
-                                                            style={{ fontSize: 11, padding: '2px 8px' }}
+                                                            style={{
+                                                                background: 'transparent',
+                                                                border: 'none',
+                                                                cursor: 'pointer',
+                                                                fontSize: 18,
+                                                                color: 'var(--text-muted)',
+                                                                padding: '2px 6px',
+                                                                borderRadius: 4,
+                                                                lineHeight: 1,
+                                                            }}
                                                             onClick={() => setSelectedEditOperation({
                                                                 sourceId: m.id,
                                                                 sourceType: m.type === 'apport' ? 'cca_apport' : 'cca_remboursement',
                                                                 ecritureId: m.ecritureId || null,
                                                             })}
-                                                            title="Modifier ce mouvement CCA"
+                                                            title="Options (Modifier)"
                                                         >
-                                                            ✏️ Modifier
+                                                            ⋮
                                                         </button>
                                                     </td>
                                                 </tr>

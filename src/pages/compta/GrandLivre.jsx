@@ -110,10 +110,7 @@ export default function GrandLivre() {
                 </div>
             </div>
 
-            {/* Notice interactive */}
-            <div className="notice notice--info" style={{ marginBottom: 16 }}>
-                💡 <strong>Édition & Justificatifs :</strong> Cliquez sur n'importe quelle ligne d'écriture ou sur le bouton <strong>✏️ Modifier</strong> pour ouvrir le formulaire complet (Dépense, Facture, CCA, Capital initial), corriger ses montants ou dates, et ajouter vos pièces justificatives.
-            </div>
+
 
             {/* Filtres */}
             <div className="card" style={{ padding: '14px 20px', marginBottom: 20 }}>
@@ -238,7 +235,7 @@ export default function GrandLivre() {
                                             <th style={{ textAlign: 'right', width: 110 }}>Débit</th>
                                             <th style={{ textAlign: 'right', width: 110 }}>Crédit</th>
                                             <th style={{ textAlign: 'right', width: 120 }}>Solde progressif</th>
-                                            <th style={{ textAlign: 'center', width: 90 }}>Action</th>
+                                            <th style={{ textAlign: 'center', width: 44 }}></th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -254,10 +251,7 @@ export default function GrandLivre() {
                                                 <td><span className="badge badge--muted">{l.journal}</span></td>
                                                 <td style={{ fontSize: 12 }}><code>{l.pieceRef}</code></td>
                                                 <td>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                        <span>{l.libelle}</span>
-                                                        <span style={{ fontSize: 11, color: 'var(--accent)', opacity: 0.75, marginLeft: 8 }}>🔍 Détail</span>
-                                                    </div>
+                                                    <span>{l.libelle}</span>
                                                 </td>
                                                 <td style={{ textAlign: 'right', fontWeight: 500 }}>
                                                     {l.debit > 0 ? formatMontant(l.debit) : '—'}
@@ -276,15 +270,23 @@ export default function GrandLivre() {
                                                 <td style={{ textAlign: 'center' }}>
                                                     <button
                                                         type="button"
-                                                        className="btn btn--sm btn--ghost"
-                                                        style={{ fontSize: 11, padding: '2px 8px' }}
+                                                        style={{
+                                                            background: 'transparent',
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            fontSize: 18,
+                                                            color: 'var(--text-muted)',
+                                                            padding: '2px 6px',
+                                                            borderRadius: 4,
+                                                            lineHeight: 1,
+                                                        }}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setSelectedEcritureId(l.ecritureId);
                                                         }}
-                                                        title="Modifier cette opération"
+                                                        title="Options (Modifier)"
                                                     >
-                                                        ✏️ Modifier
+                                                        ⋮
                                                     </button>
                                                 </td>
                                             </tr>

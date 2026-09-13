@@ -251,11 +251,20 @@ export default function ListeDepenses() {
                             />
                             <button
                                 type="button"
-                                className="btn btn--sm btn--ghost"
-                                style={{ fontSize: 12 }}
+                                style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    fontSize: 18,
+                                    color: 'var(--text-muted)',
+                                    padding: '2px 8px',
+                                    borderRadius: 4,
+                                    lineHeight: 1,
+                                }}
                                 onClick={() => setSelectedOperation({ sourceId: d.id, sourceType: 'depense', ecritureId: d.ecritureDepenseIds?.[0] })}
+                                title="Options (Modifier)"
                             >
-                                ✏️ Modifier la dépense
+                                ⋮
                             </button>
                         </div>
                     </div>

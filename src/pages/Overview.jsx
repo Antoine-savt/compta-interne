@@ -491,12 +491,11 @@ export default function Overview() {
                                                 {formatDate(tx.date)}
                                             </td>
                                             <td>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div>
                                                     <div style={{ fontWeight: 500, fontSize: 13 }}>{tx.libelle}</div>
-                                                    <span style={{ fontSize: 11, color: 'var(--accent)', opacity: 0.75, marginLeft: 8 }}>🔍</span>
-                                                </div>
-                                                <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
-                                                    Journal {tx.journal} · Réf: {tx.pieceRef}
+                                                    <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
+                                                        Journal {tx.journal} · Réf: {tx.pieceRef}
+                                                    </div>
                                                 </div>
                                             </td>
                                             <td>
@@ -508,15 +507,23 @@ export default function Overview() {
                                             <td style={{ textAlign: 'center' }}>
                                                 <button
                                                     type="button"
-                                                    className="btn btn--sm btn--ghost"
-                                                    style={{ fontSize: 11, padding: '2px 8px' }}
+                                                    style={{
+                                                        background: 'transparent',
+                                                        border: 'none',
+                                                        cursor: 'pointer',
+                                                        fontSize: 18,
+                                                        color: 'var(--text-muted)',
+                                                        padding: '2px 6px',
+                                                        borderRadius: 4,
+                                                        lineHeight: 1,
+                                                    }}
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         setSelectedEcritureId(tx.id);
                                                     }}
-                                                    title="Modifier cette opération"
+                                                    title="Options (Modifier)"
                                                 >
-                                                    ✏️ Modifier
+                                                    ⋮
                                                 </button>
                                             </td>
                                         </tr>

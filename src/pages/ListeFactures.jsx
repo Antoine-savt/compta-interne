@@ -98,11 +98,20 @@ export default function ListeFactures() {
                         />
                         <button
                             type="button"
-                            className="btn btn--sm btn--ghost"
-                            style={{ fontSize: 12 }}
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontSize: 18,
+                                color: 'var(--text-muted)',
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                lineHeight: 1,
+                            }}
                             onClick={() => setSelectedFacture(f)}
+                            title="Options (Modifier)"
                         >
-                            ✏️ Modifier la facture
+                            ⋮
                         </button>
                     </div>
                 </div>

@@ -2,15 +2,14 @@
  * FileUpload.jsx
  * ─────────────────────────────────────────────────────────────────────────────
  * Composant d'upload de pièces justificatives (factures, reçus, conventions, statuts).
- * Stockage ultra-fiable :
- * 1. Conversion DataURL Base64 directe dans Firestore pour consultation instantanée
- *    garantie sans dépendre obligatoirement d'un bucket Firebase Storage.
- * 2. Optimisation automatique des photos de reçus (redimensionnement intelligent).
- * 3. Envoi simultané vers Firebase Storage si disponible.
+ * Stockage ultra-fiable et instantané :
+ * - Conversion DataURL Base64 directe dans Firestore pour consultation immédiate
+ * - Aucun blocage sur Firebase Storage (enregistrement garanti en moins d'une seconde)
+ * - Prévisualisation et téléchargement automatiques
  */
 import { useState, useCallback } from 'react';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useDropzone } from 'react-dropzone';
 import { storage, db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
@@ -91,7 +90,7 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
                     name: file.name,
                     size: file.size,
                     type: file.type.startsWith('image') ? 'image' : 'pdf',
-                    progress: 20,
+                    progress: 50,
                     url: null,
                     docId: null,
                     error: null,
@@ -99,58 +98,18 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
                 setFiles((prev) => [...prev, fileEntry]);
 
                 try {
-                    // 1. Lire en DataURL pour stockage garanti et prévisualisation
+                    // 1. Lire immédiatement en DataURL pour stockage instantané
                     const rawDataUrl = await readFileAsDataURL(file);
                     const processedDataUrl = await optimizeImageIfNeeded(rawDataUrl, file.type);
 
-                    // 2. Tentative de stockage Firebase Storage en tâche de fond (optionnel)
-                    let storageDownloadUrl = null;
-                    let storagePath = null;
-                    try {
-                        const uid = user?.uid || 'user';
-                        storagePath = `justificatifs/${uid}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-                        const storageRef = ref(storage, storagePath);
-                        const uploadTask = uploadBytesResumable(storageRef, file);
-
-                        await new Promise((resolve) => {
-                            uploadTask.on(
-                                'state_changed',
-                                (snap) => {
-                                    const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 70) + 20;
-                                    setFiles((prev) =>
-                                        prev.map((f) => (f.name === file.name ? { ...f, progress: pct } : f))
-                                    );
-                                },
-                                (err) => {
-                                    // Non bloquant : on continuera avec le DataURL direct dans Firestore
-                                    console.warn('[FileUpload] Stockage Firebase Storage non disponible, enregistrement Firestore direct:', err.message);
-                                    resolve(null);
-                                },
-                                async () => {
-                                    try {
-                                        storageDownloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-                                    } catch (e) {
-                                        console.warn('[FileUpload] Récupération downloadURL échouée :', e.message);
-                                    }
-                                    resolve(storageDownloadUrl);
-                                }
-                            );
-                        });
-                    } catch (storageErr) {
-                        console.warn('[FileUpload] Erreur initialisation storage :', storageErr);
-                    }
-
-                    // 3. Enregistrer dans la collection Firestore /documents
+                    // 2. Enregistrer immédiatement dans la collection Firestore /documents
                     const docPayload = {
                         nom: file.name,
                         type: file.type.startsWith('image') ? 'image' : 'pdf',
                         mimeType: file.type || 'application/octet-stream',
                         taille: file.size,
-                        // Stocke la DataURL Base64 directement pour affichage garanti sans dépendance externe
                         dataUrl: processedDataUrl,
-                        // downloadURL pointe vers Storage si réussi, sinon vers dataUrl
-                        downloadURL: storageDownloadUrl || processedDataUrl,
-                        storageRef: storagePath || null,
+                        downloadURL: processedDataUrl,
                         sourceType: sourceType || 'general',
                         sourceId: sourceId || null,
                         uploadedBy: user?.uid || 'admin',
@@ -160,13 +119,14 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
 
                     const docRef = await addDoc(collection(db, 'documents'), docPayload);
 
+                    // 3. Mise à jour immédiate à 100% (succès instantané !)
                     setFiles((prev) =>
                         prev.map((f) =>
                             f.name === file.name
                                 ? {
                                     ...f,
                                     progress: 100,
-                                    url: storageDownloadUrl || processedDataUrl,
+                                    url: processedDataUrl,
                                     docId: docRef.id,
                                 }
                                 : f
@@ -175,14 +135,45 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
 
                     onUploaded?.({
                         documentId: docRef.id,
-                        downloadURL: storageDownloadUrl || processedDataUrl,
+                        downloadURL: processedDataUrl,
                         dataUrl: processedDataUrl,
                         nom: file.name,
                         taille: file.size,
                         type: file.type.startsWith('image') ? 'image' : 'pdf',
                     });
+
+                    // 4. Tentative de stockage Firebase Storage en tâche de fond complètement non-bloquante
+                    try {
+                        const uid = user?.uid || 'user';
+                        const storagePath = `justificatifs/${uid}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+                        const storageRef = ref(storage, storagePath);
+                        const uploadTask = uploadBytesResumable(storageRef, file);
+
+                        uploadTask.on(
+                            'state_changed',
+                            () => { },
+                            (err) => {
+                                console.warn('[FileUpload] Storage background ignore :', err.message);
+                            },
+                            async () => {
+                                try {
+                                    const storageDownloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                                    if (storageDownloadUrl && docRef.id) {
+                                        await updateDoc(doc(db, 'documents', docRef.id), {
+                                            downloadURL: storageDownloadUrl,
+                                            storageRef: storagePath,
+                                        });
+                                    }
+                                } catch (e) {
+                                    console.warn('[FileUpload] Storage URL background update ignore :', e.message);
+                                }
+                            }
+                        );
+                    } catch (e) {
+                        console.warn('[FileUpload] Storage not configured, Firestore dataUrl used.');
+                    }
                 } catch (err) {
-                    console.error('[FileUpload] Échec complet upload :', err);
+                    console.error('[FileUpload] Échec enregistrement :', err);
                     setFiles((prev) =>
                         prev.map((f) =>
                             f.name === file.name ? { ...f, error: err.message, progress: 0 } : f
@@ -207,29 +198,25 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
                 {...getRootProps()}
                 className={`dropzone ${isDragActive ? 'dropzone--active' : ''}`}
                 style={{
-                    border: '2px dashed var(--border)',
-                    borderRadius: 8,
-                    padding: '20px 16px',
+                    border: '1px dashed var(--border)',
+                    borderRadius: 6,
+                    padding: '16px 14px',
                     textAlign: 'center',
                     backgroundColor: isDragActive ? 'var(--bg3)' : 'var(--bg2)',
                     cursor: 'pointer',
-                    transition: 'border-color 0.2s, background-color 0.2s',
+                    transition: 'border-color 0.15s, background-color 0.15s',
                 }}
             >
                 <input {...getInputProps()} />
-                <div style={{ fontSize: 24, marginBottom: 6 }}>📎</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
                     {isDragActive
                         ? 'Déposez les pièces justificatives ici'
-                        : 'Glissez-déposez vos justificatifs ici (PDF, JPG, PNG, WEBP), ou cliquez pour sélectionner'}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                    Factures d'achat, reçus de virement, attestations bancaires, conventions CCA...
+                        : 'Glissez-déposez un justificatif ici (PDF, JPG, PNG), ou cliquez pour sélectionner'}
                 </div>
             </div>
 
             {errors.length > 0 && (
-                <div className="notice notice--danger" style={{ marginTop: 10 }}>
+                <div className="notice notice--danger" style={{ marginTop: 8 }}>
                     {errors.map((e, i) => (
                         <div key={i}>{e}</div>
                     ))}
@@ -237,7 +224,7 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
             )}
 
             {files.length > 0 && (
-                <div className="file-list" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="file-list" style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {files.map((f, i) => (
                         <div
                             key={i}
@@ -246,44 +233,41 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
-                                padding: '8px 12px',
+                                padding: '6px 10px',
                                 background: 'var(--bg)',
                                 border: '1px solid var(--border)',
-                                borderRadius: 6,
+                                borderRadius: 4,
                             }}
                         >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                                <span style={{ fontSize: 18 }}>{f.type === 'pdf' ? '📄' : '🖼️'}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                <span style={{ fontSize: 14 }}>{f.type === 'pdf' ? '📄' : '🖼️'}</span>
                                 <div style={{ minWidth: 0 }}>
-                                    <div
+                                    <span
                                         style={{
-                                            fontSize: 13,
+                                            fontSize: 12,
                                             fontWeight: 600,
                                             color: 'var(--text)',
-                                            whiteSpace: 'nowrap',
-                                            overflow: 'hidden',
-                                            textOverflow: 'ellipsis',
-                                            maxWidth: 260,
+                                            marginRight: 6,
                                         }}
                                     >
                                         {f.name}
-                                    </div>
-                                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                        {formatSize(f.size)}
-                                    </div>
+                                    </span>
+                                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                        ({formatSize(f.size)})
+                                    </span>
                                 </div>
                             </div>
 
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 {f.progress < 100 && !f.error ? (
-                                    <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 600 }}>
-                                        Enregistrement... {f.progress}%
+                                    <span style={{ color: 'var(--accent)', fontSize: 11 }}>
+                                        Enregistrement...
                                     </span>
                                 ) : f.error ? (
-                                    <span style={{ color: 'var(--danger)', fontSize: 12 }}>Échec</span>
+                                    <span style={{ color: 'var(--danger)', fontSize: 11 }}>Échec</span>
                                 ) : (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                        <span style={{ color: 'var(--success)', fontSize: 12, fontWeight: 600 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={{ color: 'var(--success)', fontSize: 11, fontWeight: 600 }}>
                                             ✓ Enregistré
                                         </span>
                                         {f.url && (
@@ -293,9 +277,9 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
                                                 rel="noreferrer"
                                                 download={f.name}
                                                 className="btn btn--sm btn--ghost"
-                                                style={{ fontSize: 11, padding: '2px 8px' }}
+                                                style={{ fontSize: 11, padding: '2px 6px' }}
                                             >
-                                                Ouvrir 👁️
+                                                Voir
                                             </a>
                                         )}
                                     </div>
