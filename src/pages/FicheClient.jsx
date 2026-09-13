@@ -10,7 +10,7 @@
  * 
  * Contrainte stricte : AUCUN EMOJI. Design sobre, clair et haute densité d'information.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
     doc, getDoc, getDocs, collection, query, where,
@@ -19,7 +19,7 @@ import {
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
 import { formatMontant, formatDate } from '../services/helpers';
-import { getCached, setCached } from '../services/dataCache';
+import { getCached, setCached, invalidateCache } from '../services/dataCache';
 
 function Spinner() {
     return (
@@ -80,12 +80,20 @@ export default function FicheClient() {
     });
     const [categories, setCategories] = useState(() => getCached('categoriesClient') || []);
     const [factures, setFactures] = useState([]);
+    const [facturations, setFacturations] = useState([]);
     const [depenses, setDepenses] = useState([]);
     const [versementsStripe, setVersementsStripe] = useState([]);
     const [loading, setLoading] = useState(() => {
         const cached = getCached('clients');
         return !cached?.some((c) => c.id === clientId);
     });
+
+    // Données complètes pour modales de rattachement
+    const [allDepenses, setAllDepenses] = useState([]);
+    const [allFactures, setAllFactures] = useState([]);
+    const [allFacturations, setAllFacturations] = useState([]);
+    const [showAttachDepenseModal, setShowAttachDepenseModal] = useState(false);
+    const [showAttachRecetteModal, setShowAttachRecetteModal] = useState(false);
 
     // Modes d'affichage
     const [edit, setEdit] = useState(false);
@@ -119,13 +127,13 @@ export default function FicheClient() {
     useEffect(() => {
         async function loadData() {
             try {
-                const [cliSnap, catSnap, factSnap, depSnap1, depSnap2, versSnap] = await Promise.all([
+                const [cliSnap, catSnap, factSnap, facturationSnap, depSnap, versSnap] = await Promise.all([
                     getDoc(doc(db, 'clients', clientId)),
                     getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
-                    getDocs(query(collection(db, 'factures'), where('clientId', '==', clientId), orderBy('dateFacture', 'desc'))),
-                    getDocs(query(collection(db, 'depenses'), where('clientId', '==', clientId))),
-                    getDocs(query(collection(db, 'depenses'), where('clientProjetId', '==', clientId))),
-                    getDocs(query(collection(db, 'versementsStripe'), where('clientId', '==', clientId), orderBy('dateVirement', 'desc'))),
+                    getDocs(collection(db, 'factures')),
+                    getDocs(collection(db, 'facturations')),
+                    getDocs(collection(db, 'depenses')),
+                    getDocs(collection(db, 'versementsStripe')),
                 ]);
 
                 if (!cliSnap.exists()) {
@@ -141,21 +149,39 @@ export default function FicheClient() {
                 setCategories(cats);
                 setCached('categoriesClient', cats);
 
-                const factList = factSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-                setFactures(factList);
+                // Factures légales
+                const facList = factSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                setAllFactures(facList);
+                setFactures(facList.filter((f) => f.clientId === clientId).sort((a, b) => {
+                    const da = a.dateFacture?.toDate ? a.dateFacture.toDate() : new Date(a.dateFacture || a.createdAt?.toDate?.() || 0);
+                    const dbDate = b.dateFacture?.toDate ? b.dateFacture.toDate() : new Date(b.dateFacture || b.createdAt?.toDate?.() || 0);
+                    return dbDate - da;
+                }));
 
-                // Dépenses dédoublonnées (clientId ou clientProjetId)
-                const depMap = new Map();
-                depSnap1.docs.forEach((d) => depMap.set(d.id, { id: d.id, ...d.data() }));
-                depSnap2.docs.forEach((d) => depMap.set(d.id, { id: d.id, ...d.data() }));
-                const depList = Array.from(depMap.values()).sort((a, b) => {
-                    const da = a.dateDépense?.toDate ? a.dateDépense.toDate() : new Date(a.dateDépense || 0);
-                    const dbDate = b.dateDépense?.toDate ? b.dateDépense.toDate() : new Date(b.dateDépense || 0);
+                // Facturations
+                const factuList = facturationSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                setAllFacturations(factuList);
+                setFacturations(factuList.filter((f) => f.clientId === clientId).sort((a, b) => {
+                    const da = a.date?.toDate ? a.date.toDate() : new Date(a.date || a.createdAt?.toDate?.() || 0);
+                    const dbDate = b.date?.toDate ? b.date.toDate() : new Date(b.date || b.createdAt?.toDate?.() || 0);
+                    return dbDate - da;
+                }));
+
+                // Dépenses analytiques
+                const depListAll = depSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                setAllDepenses(depListAll);
+                const depListClient = depListAll.filter(
+                    (d) => d.clientProjetId === clientId || d.clientId === clientId || (cliData.nom && d.clientProjetNom === cliData.nom)
+                ).sort((a, b) => {
+                    const da = a.dateDépense?.toDate ? a.dateDépense.toDate() : new Date(a.dateDépense || a.createdAt?.toDate?.() || 0);
+                    const dbDate = b.dateDépense?.toDate ? b.dateDépense.toDate() : new Date(b.dateDépense || b.createdAt?.toDate?.() || 0);
                     return dbDate - da;
                 });
-                setDepenses(depList);
+                setDepenses(depListClient);
 
-                setVersementsStripe(versSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+                // Versements Stripe
+                const versList = versSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                setVersementsStripe(versList.filter((v) => v.clientId === clientId));
             } catch (err) {
                 console.error('Erreur chargement fiche client:', err);
             } finally {
@@ -165,23 +191,125 @@ export default function FicheClient() {
         loadData();
     }, [clientId, navigate]);
 
+    // ─── Actions de rattachement / détachement de dépenses ─────────────────────
+    async function handleRattacherDepense(depId) {
+        const nom = client?.nom || 'Client';
+        setDepenses((prev) => {
+            const found = allDepenses.find((d) => d.id === depId);
+            if (!found) return prev;
+            return [{ ...found, clientProjetId: clientId, clientProjetNom: nom, clientId, clientNom: nom }, ...prev.filter((d) => d.id !== depId)];
+        });
+        setAllDepenses((prev) =>
+            prev.map((d) => (d.id === depId ? { ...d, clientProjetId: clientId, clientProjetNom: nom, clientId, clientNom: nom } : d))
+        );
+        invalidateCache('depenses');
+        invalidateCache('clients');
+
+        try {
+            await updateDoc(doc(db, 'depenses', depId), {
+                clientProjetId: clientId,
+                clientProjetNom: nom,
+                clientId: clientId,
+                clientNom: nom,
+                updatedAt: serverTimestamp(),
+            });
+        } catch (err) {
+            console.error('Erreur rattachement dépense:', err);
+        }
+    }
+
+    async function handleDetacherDepense(depId) {
+        setDepenses((prev) => prev.filter((d) => d.id !== depId));
+        setAllDepenses((prev) =>
+            prev.map((d) => (d.id === depId ? { ...d, clientProjetId: null, clientProjetNom: null, clientId: null, clientNom: null } : d))
+        );
+        invalidateCache('depenses');
+        invalidateCache('clients');
+
+        try {
+            await updateDoc(doc(db, 'depenses', depId), {
+                clientProjetId: null,
+                clientProjetNom: null,
+                clientId: null,
+                clientNom: null,
+                updatedAt: serverTimestamp(),
+            });
+        } catch (err) {
+            console.error('Erreur détachement dépense:', err);
+        }
+    }
+
+    // ─── Actions de rattachement / détachement de recettes / factures ──────────
+    async function handleRattacherRecette(item, type) {
+        const nom = client?.nom || 'Client';
+        const collName = type === 'facturation' ? 'facturations' : 'factures';
+        if (type === 'facturation') {
+            setFacturations((prev) => [{ ...item, clientId, clientNom: nom }, ...prev.filter((f) => f.id !== item.id)]);
+            setAllFacturations((prev) => prev.map((f) => (f.id === item.id ? { ...f, clientId, clientNom: nom } : f)));
+        } else {
+            setFactures((prev) => [{ ...item, clientId, clientNom: nom }, ...prev.filter((f) => f.id !== item.id)]);
+            setAllFactures((prev) => prev.map((f) => (f.id === item.id ? { ...f, clientId, clientNom: nom } : f)));
+        }
+        invalidateCache('clients');
+
+        try {
+            await updateDoc(doc(db, collName, item.id), {
+                clientId,
+                clientNom: nom,
+                updatedAt: serverTimestamp(),
+            });
+        } catch (err) {
+            console.error('Erreur rattachement recette:', err);
+        }
+    }
+
+    async function handleDetacherRecette(item, type) {
+        const collName = type === 'facturation' ? 'facturations' : 'factures';
+        if (type === 'facturation') {
+            setFacturations((prev) => prev.filter((f) => f.id !== item.id));
+            setAllFacturations((prev) => prev.map((f) => (f.id === item.id ? { ...f, clientId: null, clientNom: null } : f)));
+        } else {
+            setFactures((prev) => prev.filter((f) => f.id !== item.id));
+            setAllFactures((prev) => prev.map((f) => (f.id === item.id ? { ...f, clientId: null, clientNom: null } : f)));
+        }
+        invalidateCache('clients');
+
+        try {
+            await updateDoc(doc(db, collName, item.id), {
+                clientId: null,
+                clientNom: null,
+                updatedAt: serverTimestamp(),
+            });
+        } catch (err) {
+            console.error('Erreur détachement recette:', err);
+        }
+    }
+
     // ─── Métriques financières ────────────────────────────────────────────────
-    const totalFactureTTC = factures.reduce((s, f) => s + (f.totalTTC ?? 0), 0);
-    const totalFactureHT = factures.reduce((s, f) => s + (f.totalHT ?? f.totalTTC ?? 0), 0);
+    const totalFacturesLegalesTTC = factures.reduce((s, f) => s + (f.totalTTC ?? 0), 0);
+    const totalFacturationsTTC = facturations.reduce((s, f) => s + (f.totalFacture ?? 0), 0);
+    const totalFactureTTC = totalFacturesLegalesTTC + totalFacturationsTTC;
+
+    const totalFactureHT = factures.reduce((s, f) => s + (f.totalHT ?? f.totalTTC ?? 0), 0) + totalFacturationsTTC;
     const totalEnAttenteTTC = factures
         .filter((f) => f.statut === 'en_attente')
-        .reduce((s, f) => s + (f.totalTTC ?? 0), 0);
-    const countEnAttente = factures.filter((f) => f.statut === 'en_attente').length;
+        .reduce((s, f) => s + (f.totalTTC ?? 0), 0) +
+        facturations
+        .filter((f) => f.statut !== 'encaissee' && !f.withStripe)
+        .reduce((s, f) => s + (f.totalFacture ?? 0), 0);
+    const countEnAttente = factures.filter((f) => f.statut === 'en_attente').length + facturations.filter((f) => f.statut !== 'encaissee' && !f.withStripe).length;
 
     const totalDepensesTTC = depenses.reduce((s, d) => s + (d.montantTTC ?? d.montant ?? 0), 0);
-    const totalEncaisseStripe = versementsStripe.reduce((s, v) => s + (v.montantBrut ?? 0), 0);
+    const totalEncaisseStripe = versementsStripe.reduce((s, v) => s + (v.montantBrut ?? 0), 0) +
+        facturations.reduce((s, f) => s + (f.stripe?.brut ?? (f.withStripe ? f.totalFacture : 0)), 0);
 
     // Chiffre d'affaires global pris en compte
     const caGlobal = Math.max(totalFactureTTC, totalEncaisseStripe);
-    const margeNette = caGlobal > 0 ? caGlobal - totalDepensesTTC : null;
-    const pourcentageMarge = caGlobal > 0 ? (margeNette / caGlobal) * 100 : null;
+    const margeNette = caGlobal > 0 ? caGlobal - totalDepensesTTC : (totalDepensesTTC > 0 ? -totalDepensesTTC : null);
+    const pourcentageMarge = caGlobal > 0 ? (margeNette / caGlobal) * 100 : (totalDepensesTTC > 0 ? -100 : null);
 
-    const mrr = parseFloat(client?.abonnementMensuelManuel) || 0;
+    const mrrFacturations = facturations.reduce((s, f) => s + (f.mrr ?? 0), 0);
+    const mrr = mrrFacturations || parseFloat(client?.abonnementMensuelManuel) || 0;
 
     // ─── Mise à jour globale du client ─────────────────────────────────────────
     async function handleSaveEdit() {
@@ -551,6 +679,20 @@ export default function FicheClient() {
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setShowAttachDepenseModal(true)}
+                    >
+                        + Rattacher une dépense
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setShowAttachRecetteModal(true)}
+                    >
+                        + Rattacher une recette
+                    </button>
                     <button
                         type="button"
                         className="btn btn--ghost btn--sm"
@@ -1369,80 +1511,142 @@ export default function FicheClient() {
                 </div>
             </div>
 
-            {/* ─── Section Inférieure : Facturation & Comptabilité rattachée ─── */}
+            {/* ─── Section Inférieure : Facturation & Recettes rattachées ─── */}
             <div className="card" style={{ marginTop: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
                     <div>
                         <div className="card__title" style={{ margin: 0 }}>
-                            Factures émises pour ce client
+                            Factures & Recettes de ce client
                         </div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                            Historique officiel issu du module de facturation
+                            Factures officielles, facturations clients et règlements ({factures.length + facturations.length} enregistrements)
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        className="btn btn--primary btn--sm"
-                        onClick={() => navigate(`/factures/nouvelle?clientId=${client.id}`)}
-                    >
-                        + Émettre une facture
-                    </button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                            type="button"
+                            className="btn btn--ghost btn--sm"
+                            onClick={() => setShowAttachRecetteModal(true)}
+                        >
+                            + Rattacher une recette existante
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn--primary btn--sm"
+                            onClick={() => navigate(`/factures/nouvelle?clientId=${client.id}`)}
+                        >
+                            + Émettre une facture
+                        </button>
+                    </div>
                 </div>
 
                 <div className="table-wrap">
                     <table>
                         <thead>
                             <tr>
-                                <th>Numéro</th>
+                                <th>Référence / Type</th>
                                 <th>Date</th>
+                                <th>Prestations / Description</th>
                                 <th style={{ textAlign: 'right' }}>Total HT</th>
                                 <th style={{ textAlign: 'right' }}>Total TTC</th>
                                 <th>Statut</th>
-                                <th style={{ textAlign: 'right' }}>Action</th>
+                                <th style={{ textAlign: 'right' }}>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {factures.length === 0 ? (
+                            {factures.length === 0 && facturations.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} style={{ color: 'var(--text-muted)', textAlign: 'center', padding: 24 }}>
-                                        Aucune facture émise pour ce client pour le moment.
+                                    <td colSpan={7} style={{ color: 'var(--text-muted)', textAlign: 'center', padding: 24 }}>
+                                        Aucune facture ni recette rattachée à ce client pour le moment.
                                     </td>
                                 </tr>
                             ) : (
-                                factures.map((f) => (
-                                    <tr key={f.id}>
-                                        <td style={{ fontWeight: 600 }}>{f.numero}</td>
-                                        <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatDate(f.dateFacture)}</td>
-                                        <td style={{ textAlign: 'right', fontSize: 13 }}>{formatMontant(f.totalHT ?? f.totalTTC)}</td>
-                                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMontant(f.totalTTC)}</td>
-                                        <td>
-                                            {f.statut === 'encaissee' ? (
-                                                <span className="badge badge--success">Encaissée</span>
-                                            ) : f.statut === 'annulee' ? (
-                                                <span className="badge badge--danger">Annulée</span>
-                                            ) : (
-                                                <span className="badge badge--warning">En attente</span>
-                                            )}
-                                        </td>
-                                        <td style={{ textAlign: 'right' }}>
-                                            {f.statut === 'en_attente' && (
+                                <>
+                                    {/* Factures légales */}
+                                    {factures.map((f) => (
+                                        <tr key={f.id}>
+                                            <td style={{ fontWeight: 600 }}>
+                                                <span className="badge badge--primary" style={{ marginRight: 6 }}>Facture</span>
+                                                {f.numero}
+                                            </td>
+                                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatDate(f.dateFacture)}</td>
+                                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>Facture n° {f.numero}</td>
+                                            <td style={{ textAlign: 'right', fontSize: 13 }}>{formatMontant(f.totalHT ?? f.totalTTC)}</td>
+                                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMontant(f.totalTTC)}</td>
+                                            <td>
+                                                {f.statut === 'encaissee' ? (
+                                                    <span className="badge badge--success">Encaissée</span>
+                                                ) : f.statut === 'annulee' ? (
+                                                    <span className="badge badge--danger">Annulée</span>
+                                                ) : (
+                                                    <span className="badge badge--warning">En attente</span>
+                                                )}
+                                            </td>
+                                            <td style={{ textAlign: 'right' }}>
+                                                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                                                    {f.statut === 'en_attente' && (
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn--sm btn--ghost"
+                                                            onClick={() => handleMarquerFacturePayee(f)}
+                                                        >
+                                                            Encaisser
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn--sm btn--ghost"
+                                                        title="Détacher de ce client"
+                                                        onClick={() => handleDetacherRecette(f, 'facture')}
+                                                        style={{ color: 'var(--text-muted)' }}
+                                                    >
+                                                        Détacher
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+
+                                    {/* Facturations clients */}
+                                    {facturations.map((factu) => (
+                                        <tr key={factu.id}>
+                                            <td style={{ fontWeight: 600 }}>
+                                                <span className="badge badge--info" style={{ marginRight: 6 }}>Facturation</span>
+                                                {factu.clientNom || 'Client'}
+                                            </td>
+                                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatDate(factu.date || factu.dateFacturation)}</td>
+                                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                                {factu.lignes?.map((l) => l.description).join(', ') || 'Prestations'}
+                                            </td>
+                                            <td style={{ textAlign: 'right', fontSize: 13 }}>{formatMontant(factu.totalFacture)}</td>
+                                            <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--success)' }}>{formatMontant(factu.totalFacture)}</td>
+                                            <td>
+                                                {factu.statut === 'encaissee' || factu.withStripe ? (
+                                                    <span className="badge badge--success">Encaissé</span>
+                                                ) : (
+                                                    <span className="badge badge--warning">En attente</span>
+                                                )}
+                                            </td>
+                                            <td style={{ textAlign: 'right' }}>
                                                 <button
                                                     type="button"
                                                     className="btn btn--sm btn--ghost"
-                                                    onClick={() => handleMarquerFacturePayee(f)}
+                                                    title="Détacher de ce client"
+                                                    onClick={() => handleDetacherRecette(factu, 'facturation')}
+                                                    style={{ color: 'var(--text-muted)' }}
                                                 >
-                                                    Encaisser
+                                                    Détacher
                                                 </button>
-                                            )}
-                                        </td>
-                                    </tr>
-                                ))
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </>
                             )}
                         </tbody>
-                        {factures.length > 0 && (
+                        {(factures.length > 0 || facturations.length > 0) && (
                             <tfoot>
                                 <tr>
-                                    <td colSpan={2}><strong>Total facturé</strong></td>
+                                    <td colSpan={3}><strong>Total facturé</strong></td>
                                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMontant(totalFactureHT)}</td>
                                     <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>{formatMontant(totalFactureTTC)}</td>
                                     <td colSpan={2}></td>
@@ -1453,12 +1657,49 @@ export default function FicheClient() {
                 </div>
             </div>
 
-            {/* Dépenses rattachées au projet */}
-            {depenses.length > 0 && (
-                <div className="card">
-                    <div className="card__title" style={{ marginBottom: 12 }}>
-                        Dépenses analytiques rattachées à ce projet
+            {/* ─── Dépenses rattachées au projet / client ─── */}
+            <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+                    <div>
+                        <div className="card__title" style={{ margin: 0 }}>
+                            Dépenses analytiques rattachées à ce projet
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                            Coûts directs engagés pour {client.nom} ({depenses.length} dépense{depenses.length > 1 ? 's' : ''})
+                        </div>
                     </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                            type="button"
+                            className="btn btn--ghost btn--sm"
+                            onClick={() => setShowAttachDepenseModal(true)}
+                        >
+                            + Rattacher une dépense existante
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn--primary btn--sm"
+                            onClick={() => navigate(`/depenses/nouvelle?clientId=${client.id}`)}
+                        >
+                            + Nouvelle dépense
+                        </button>
+                    </div>
+                </div>
+
+                {depenses.length === 0 ? (
+                    <div style={{ padding: '24px 16px', textAlign: 'center', background: 'var(--bg2)', borderRadius: 'var(--radius)', border: '1px dashed var(--border)' }}>
+                        <p style={{ color: 'var(--text-muted)', marginBottom: 10, fontSize: 13 }}>
+                            Aucune dépense n'est encore imputée à ce client.
+                        </p>
+                        <button
+                            type="button"
+                            className="btn btn--sm btn--ghost"
+                            onClick={() => setShowAttachDepenseModal(true)}
+                        >
+                            + Parcourir et rattacher une dépense existante
+                        </button>
+                    </div>
+                ) : (
                     <div className="table-wrap">
                         <table>
                             <thead>
@@ -1466,8 +1707,10 @@ export default function FicheClient() {
                                     <th>Date</th>
                                     <th>Fournisseur</th>
                                     <th>Description</th>
+                                    <th>Catégorie</th>
                                     <th style={{ textAlign: 'right' }}>Montant TTC</th>
                                     <th>Statut</th>
+                                    <th style={{ textAlign: 'right' }}>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1476,6 +1719,11 @@ export default function FicheClient() {
                                         <td style={{ fontSize: 12 }}>{formatDate(d.dateDépense)}</td>
                                         <td style={{ fontWeight: 500 }}>{d.fournisseurNom || '—'}</td>
                                         <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>{d.description}</td>
+                                        <td>
+                                            <span className="badge badge--muted" style={{ fontSize: 11 }}>
+                                                {d.categorieLabel || 'Dépense'}
+                                            </span>
+                                        </td>
                                         <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--danger)' }}>
                                             − {formatMontant(d.montantTTC ?? d.montant)}
                                         </td>
@@ -1486,12 +1734,23 @@ export default function FicheClient() {
                                                 <span className="badge badge--warning">À payer</span>
                                             )}
                                         </td>
+                                        <td style={{ textAlign: 'right' }}>
+                                            <button
+                                                type="button"
+                                                className="btn btn--sm btn--ghost"
+                                                title="Détacher de ce client"
+                                                onClick={() => handleDetacherDepense(d.id)}
+                                                style={{ color: 'var(--text-muted)' }}
+                                            >
+                                                Détacher
+                                            </button>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
                             <tfoot>
                                 <tr>
-                                    <td colSpan={3}><strong>Total dépenses projet</strong></td>
+                                    <td colSpan={4}><strong>Total dépenses projet</strong></td>
                                     <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--danger)' }}>
                                         − {formatMontant(totalDepensesTTC)}
                                     </td>
@@ -1500,8 +1759,8 @@ export default function FicheClient() {
                             </tfoot>
                         </table>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
 
             {/* ─── Modal Planifier / Modifier Rendez-vous ─── */}
             {showRdvModal && (
@@ -1638,6 +1897,309 @@ export default function FicheClient() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+// ─── Modal : Rattacher une Dépense Existante ─────────────────────────────────
+function ModalRattacherDepense({ client, depenses, onRattacher, onDetacher, onClose }) {
+    const [search, setSearch] = useState('');
+    const [filterTab, setFilterTab] = useState('toutes'); // 'toutes' | 'libres' | 'liees'
+
+    const filtered = useMemo(() => {
+        return depenses.filter((d) => {
+            const isLieeCeClient = d.clientProjetId === client.id || d.clientId === client.id || (client.nom && d.clientProjetNom === client.nom);
+            const isLibre = !d.clientProjetId && !d.clientId;
+
+            if (filterTab === 'libres' && !isLibre) return false;
+            if (filterTab === 'liees' && !isLieeCeClient) return false;
+
+            if (!search.trim()) return true;
+            const q = search.toLowerCase();
+            const text = `${d.fournisseurNom || ''} ${d.description || ''} ${d.categorieLabel || ''} ${d.montant || ''}`.toLowerCase();
+            return text.includes(q);
+        });
+    }, [depenses, client, search, filterTab]);
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-header">
+                    <div>
+                        <div style={{ fontWeight: 700, fontSize: 16 }}>
+                            Rattacher des dépenses à {client.nom}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                            Sélectionnez les dépenses à imputer à ce projet pour mettre à jour la marge nette.
+                        </div>
+                    </div>
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>X</button>
+                </div>
+
+                <div className="modal-body">
+                    {/* Recherche et filtres */}
+                    <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+                        <input
+                            type="text"
+                            className="form-input"
+                            placeholder="Filtrer par fournisseur, motif, montant..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            style={{ flex: 1, minWidth: 200 }}
+                            autoFocus
+                        />
+                        <div className="view-tabs">
+                            <button
+                                type="button"
+                                className={`view-tab-btn ${filterTab === 'toutes' ? 'view-tab-btn--active' : ''}`}
+                                onClick={() => setFilterTab('toutes')}
+                                style={{ padding: '4px 10px', fontSize: 12 }}
+                            >
+                                Toutes ({depenses.length})
+                            </button>
+                            <button
+                                type="button"
+                                className={`view-tab-btn ${filterTab === 'libres' ? 'view-tab-btn--active' : ''}`}
+                                onClick={() => setFilterTab('libres')}
+                                style={{ padding: '4px 10px', fontSize: 12 }}
+                            >
+                                Non rattachées
+                            </button>
+                            <button
+                                type="button"
+                                className={`view-tab-btn ${filterTab === 'liees' ? 'view-tab-btn--active' : ''}`}
+                                onClick={() => setFilterTab('liees')}
+                                style={{ padding: '4px 10px', fontSize: 12 }}
+                            >
+                                Rattachées à ce client
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Liste des dépenses */}
+                    {filtered.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                            Aucune dépense ne correspond aux critères.
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {filtered.map((d) => {
+                                const isLieeCeClient = d.clientProjetId === client.id || d.clientId === client.id || (client.nom && d.clientProjetNom === client.nom);
+                                const isLieeAutre = (d.clientProjetId || d.clientId) && !isLieeCeClient;
+
+                                return (
+                                    <div
+                                        key={d.id}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            padding: '10px 14px',
+                                            background: isLieeCeClient ? '#ecfdf5' : 'var(--bg2)',
+                                            border: `1px solid ${isLieeCeClient ? '#a7f3d0' : 'var(--border)'}`,
+                                            borderRadius: 'var(--radius)',
+                                            gap: 12,
+                                        }}
+                                    >
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                                <span style={{ fontWeight: 600, fontSize: 13 }}>
+                                                    {d.fournisseurNom || 'Fournisseur'}
+                                                </span>
+                                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                                    {formatDate(d.dateDépense || d.date)}
+                                                </span>
+                                                <span className="badge badge--muted" style={{ fontSize: 10 }}>
+                                                    {d.categorieLabel || 'Dépense'}
+                                                </span>
+                                                {isLieeCeClient && (
+                                                    <span className="badge badge--success" style={{ fontSize: 10 }}>
+                                                        Rattachée à ce client
+                                                    </span>
+                                                )}
+                                                {isLieeAutre && (
+                                                    <span className="badge badge--warning" style={{ fontSize: 10 }}>
+                                                        Rattachée à {d.clientProjetNom || d.clientNom || 'autre'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {d.description && (
+                                                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                    {d.description}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                                            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--danger)', whiteSpace: 'nowrap' }}>
+                                                − {formatMontant(d.montantTTC ?? d.montant ?? 0)}
+                                            </div>
+
+                                            {isLieeCeClient ? (
+                                                <button
+                                                    type="button"
+                                                    className="btn btn--ghost btn--sm"
+                                                    onClick={() => onDetacher(d.id)}
+                                                    style={{ color: 'var(--danger)', fontSize: 12 }}
+                                                >
+                                                    Détacher
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    className="btn btn--primary btn--sm"
+                                                    onClick={() => onRattacher(d.id)}
+                                                    style={{ fontSize: 12 }}
+                                                >
+                                                    {isLieeAutre ? 'Transférer ici' : '+ Rattacher'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                <div className="modal-footer">
+                    <button type="button" className="btn btn--primary btn--sm" onClick={onClose}>
+                        Fermer
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─── Modal : Rattacher une Recette / Facture ─────────────────────────────────
+function ModalRattacherRecette({ client, factures, facturations, onRattacher, onDetacher, onClose }) {
+    const [search, setSearch] = useState('');
+
+    const allRecettes = useMemo(() => {
+        const list = [];
+        factures.forEach((f) => list.push({ ...f, typeRecette: 'facture', refTitre: `Facture #${f.numero || ''}` }));
+        facturations.forEach((f) => list.push({ ...f, typeRecette: 'facturation', refTitre: f.clientNom ? `Facturation ${f.clientNom}` : 'Facturation client' }));
+        return list;
+    }, [factures, facturations]);
+
+    const filtered = useMemo(() => {
+        return allRecettes.filter((r) => {
+            if (!search.trim()) return true;
+            const q = search.toLowerCase();
+            const text = `${r.refTitre} ${r.clientNom || ''} ${r.totalFacture || r.totalTTC || ''}`.toLowerCase();
+            return text.includes(q);
+        });
+    }, [allRecettes, search]);
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-header">
+                    <div>
+                        <div style={{ fontWeight: 700, fontSize: 16 }}>
+                            Rattacher des factures ou recettes à {client.nom}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                            Affectez les factures existantes à ce dossier client.
+                        </div>
+                    </div>
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>X</button>
+                </div>
+
+                <div className="modal-body">
+                    <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Rechercher par référence, libellé, montant..."
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        style={{ width: '100%', marginBottom: 14 }}
+                        autoFocus
+                    />
+
+                    {filtered.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                            Aucune facture ou recette trouvée.
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {filtered.map((r) => {
+                                const isLieeCeClient = r.clientId === client.id;
+                                const isLieeAutre = r.clientId && !isLieeCeClient;
+                                const montant = r.totalFacture ?? r.totalTTC ?? r.totalHT ?? 0;
+
+                                return (
+                                    <div
+                                        key={r.id}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            padding: '10px 14px',
+                                            background: isLieeCeClient ? '#ecfdf5' : 'var(--bg2)',
+                                            border: `1px solid ${isLieeCeClient ? '#a7f3d0' : 'var(--border)'}`,
+                                            borderRadius: 'var(--radius)',
+                                            gap: 12,
+                                        }}
+                                    >
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                <span style={{ fontWeight: 600, fontSize: 13 }}>{r.refTitre}</span>
+                                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                                    {formatDate(r.date || r.dateFacture || r.dateFacturation)}
+                                                </span>
+                                                {isLieeCeClient && (
+                                                    <span className="badge badge--success" style={{ fontSize: 10 }}>
+                                                        Rattachée à ce client
+                                                    </span>
+                                                )}
+                                                {isLieeAutre && (
+                                                    <span className="badge badge--warning" style={{ fontSize: 10 }}>
+                                                        Attribuée à {r.clientNom || 'autre'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                                            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--success)', whiteSpace: 'nowrap' }}>
+                                                + {formatMontant(montant)}
+                                            </div>
+
+                                            {isLieeCeClient ? (
+                                                <button
+                                                    type="button"
+                                                    className="btn btn--ghost btn--sm"
+                                                    onClick={() => onDetacher(r, r.typeRecette)}
+                                                    style={{ color: 'var(--danger)', fontSize: 12 }}
+                                                >
+                                                    Détacher
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    className="btn btn--primary btn--sm"
+                                                    onClick={() => onRattacher(r, r.typeRecette)}
+                                                    style={{ fontSize: 12 }}
+                                                >
+                                                    + Rattacher
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                <div className="modal-footer">
+                    <button type="button" className="btn btn--primary btn--sm" onClick={onClose}>
+                        Fermer
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

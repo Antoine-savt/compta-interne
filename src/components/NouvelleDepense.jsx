@@ -54,9 +54,15 @@ export function NouvelleDepense({ onCreated }) {
         getDocs(query(collection(db, 'fournisseurs'), orderBy('nom'))).then((s) =>
             setFournisseurs(s.docs.map((d) => ({ id: d.id, ...d.data() })))
         );
-        getDocs(query(collection(db, 'clients'), orderBy('nom'))).then((s) =>
-            setClients(s.docs.map((d) => ({ id: d.id, ...d.data() })))
-        );
+        getDocs(query(collection(db, 'clients'), orderBy('nom'))).then((s) => {
+            const list = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+            setClients(list);
+            const searchParams = new URLSearchParams(window.location.search);
+            const prefill = searchParams.get('clientId');
+            if (prefill && list.some((c) => c.id === prefill)) {
+                setClientProjetId(prefill);
+            }
+        });
         getSettings().then((s) => {
             setSettings(s);
             setTvaOn(s.statutTVA === 'redevable');
@@ -139,6 +145,8 @@ export function NouvelleDepense({ onCreated }) {
                 motif: motif || null,
                 clientProjetId: clientProjetId || null,
                 clientProjetNom: clientProjet?.nom ?? null,
+                clientId: clientProjetId || null,
+                clientNom: clientProjet?.nom ?? null,
                 dateDépense: new Date(date),
                 statut: dejaPayee ? 'payee' : 'a_payer',
                 datePaiement: dejaPayee ? new Date(datePaiement || date) : null,

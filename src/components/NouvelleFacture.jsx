@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Formulaire "Facturer un client"
  * 
  * Génère automatiquement les écritures comptables via la fonction garde-fou.
@@ -93,9 +93,19 @@ export function NouvelleFacture({ onCreated }) {
 
     // Charger clients + settings
     useEffect(() => {
-        getDocs(query(collection(db, 'clients'), orderBy('nom'))).then((snap) =>
-            setClients(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-        );
+        getDocs(query(collection(db, 'clients'), orderBy('nom'))).then((snap) => {
+            const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            setClients(list);
+            const searchParams = new URLSearchParams(window.location.search);
+            const prefill = searchParams.get('clientId');
+            if (prefill) {
+                const found = list.find((c) => c.id === prefill);
+                if (found) {
+                    setClientId(found.id);
+                    setClientNom(found.nom);
+                }
+            }
+        });
         getSettings().then((s) => {
             setSettings(s);
             setTvaOn(s.statutTVA === 'redevable');

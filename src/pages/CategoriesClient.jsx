@@ -32,20 +32,33 @@ export default function CategoriesClient() {
     const [showForm, setShowForm] = useState(false);
     const [saving, setSaving] = useState(false);
 
+    const [factures, setFactures] = useState([]);
+    const [facturations, setFacturations] = useState([]);
+    const [depenses, setDepenses] = useState([]);
+
     async function load() {
         try {
-            const [catSnap, cliSnap, versSnap] = await Promise.all([
+            const [catSnap, cliSnap, versSnap, factSnap, factuSnap, depSnap] = await Promise.all([
                 getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
                 getDocs(collection(db, 'clients')),
                 getDocs(collection(db, 'versementsStripe')),
+                getDocs(collection(db, 'factures')),
+                getDocs(collection(db, 'facturations')),
+                getDocs(collection(db, 'depenses')),
             ]);
             const cats = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
             const clis = cliSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
             const vers = versSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const facts = factSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const factus = factuSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const deps = depSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
             setCategories(cats);
             setClients(clis);
             setVersements(vers);
+            setFactures(facts);
+            setFacturations(factus);
+            setDepenses(deps);
 
             setCached('categoriesClient', cats);
             setCached('versementsStripe', vers);
@@ -58,14 +71,34 @@ export default function CategoriesClient() {
 
     useEffect(() => { load(); }, []);
 
-    // Agrégats par catégorie
+    // Agrégats par catégorie (Recettes facturées, Dépenses affectées, Marge nette)
     function stats(catId) {
-        const cliIds = clients.filter((c) => c.categorieId === catId).map((c) => c.id);
+        const catClients = clients.filter((c) => catId ? c.categorieId === catId : !c.categorieId);
+        const cliIds = catClients.map((c) => c.id);
+        const cliNames = catClients.map((c) => (c.nom || '').toLowerCase());
         const nbClients = cliIds.length;
-        const totalEnc = versements
-            .filter((v) => cliIds.includes(v.clientId))
+
+        const totalFact = factures
+            .filter((f) => cliIds.includes(f.clientId) || (f.clientNom && cliNames.includes(f.clientNom.toLowerCase())))
+            .reduce((s, f) => s + (f.totalTTC ?? f.totalFacture ?? 0), 0);
+
+        const totalFactu = facturations
+            .filter((f) => cliIds.includes(f.clientId) || (f.clientNom && cliNames.includes(f.clientNom.toLowerCase())))
+            .reduce((s, f) => s + (f.totalFacture ?? f.totalTTC ?? f.montant ?? 0), 0);
+
+        const totalVers = versements
+            .filter((v) => cliIds.includes(v.clientId) || (v.clientNom && cliNames.includes(v.clientNom.toLowerCase())))
             .reduce((s, v) => s + (v.montantBrut ?? 0), 0);
-        return { nbClients, totalEnc };
+
+        const totalRecettes = Math.max(totalFact + totalFactu, totalVers);
+
+        const totalDep = depenses
+            .filter((d) => cliIds.includes(d.clientProjetId) || cliIds.includes(d.clientId) || (d.clientProjetNom && cliNames.includes(d.clientProjetNom.toLowerCase())))
+            .reduce((s, d) => s + (d.montantTTC ?? d.montant ?? 0), 0);
+
+        const margeNette = totalRecettes - totalDep;
+
+        return { nbClients, totalEnc: totalRecettes, totalDep, margeNette };
     }
 
     function startEdit(cat) {
@@ -266,13 +299,15 @@ export default function CategoriesClient() {
                                     <th style={{ width: 40 }}></th>
                                     <th>Catégorie</th>
                                     <th style={{ textAlign: 'right' }}>Clients</th>
-                                    <th style={{ textAlign: 'right' }}>Total encaissé</th>
+                                    <th style={{ textAlign: 'right' }}>Recettes</th>
+                                    <th style={{ textAlign: 'right' }}>Dépenses</th>
+                                    <th style={{ textAlign: 'right' }}>Marge nette</th>
                                     <th></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {categories.map((cat, idx) => {
-                                    const { nbClients, totalEnc } = stats(cat.id);
+                                    const { nbClients, totalEnc, totalDep, margeNette } = stats(cat.id);
                                     return (
                                         <tr key={cat.id}>
                                             <td>
@@ -288,8 +323,12 @@ export default function CategoriesClient() {
                                             </td>
                                             <td style={{ textAlign: 'right' }}>{nbClients}</td>
                                             <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatMontant(totalEnc)}</td>
+                                            <td style={{ textAlign: 'right', color: 'var(--danger)' }}>{totalDep > 0 ? `− ${formatMontant(totalDep)}` : '—'}</td>
+                                            <td style={{ textAlign: 'right', fontWeight: 600, color: margeNette >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                                                {formatMontant(margeNette)}
+                                            </td>
                                             <td>
-                                                <div style={{ display: 'flex', gap: 6 }}>
+                                                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                                                     <button className="btn btn--sm btn--ghost" onClick={() => startEdit(cat)}>Modifier</button>
                                                     <button className="btn btn--sm btn--danger" onClick={() => handleDelete(cat.id)}>Supprimer</button>
                                                 </div>
@@ -298,13 +337,22 @@ export default function CategoriesClient() {
                                     );
                                 })}
                                 {/* Ligne "Non catégorisé" */}
-                                <tr style={{ opacity: 0.7 }}>
-                                    <td></td>
-                                    <td><span className="badge badge--muted">Non catégorisé</span></td>
-                                    <td style={{ textAlign: 'right' }}>{noncategorises.length}</td>
-                                    <td style={{ textAlign: 'right' }}>{formatMontant(totalEncNonCat)}</td>
-                                    <td></td>
-                                </tr>
+                                {(() => {
+                                    const nonCatStats = stats(null);
+                                    return (
+                                        <tr style={{ opacity: 0.8, background: 'var(--bg2)' }}>
+                                            <td></td>
+                                            <td><span className="badge badge--muted">Non catégorisé</span></td>
+                                            <td style={{ textAlign: 'right' }}>{nonCatStats.nbClients}</td>
+                                            <td style={{ textAlign: 'right' }}>{formatMontant(nonCatStats.totalEnc)}</td>
+                                            <td style={{ textAlign: 'right', color: 'var(--danger)' }}>{nonCatStats.totalDep > 0 ? `− ${formatMontant(nonCatStats.totalDep)}` : '—'}</td>
+                                            <td style={{ textAlign: 'right', fontWeight: 600, color: nonCatStats.margeNette >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                                                {formatMontant(nonCatStats.margeNette)}
+                                            </td>
+                                            <td></td>
+                                        </tr>
+                                    );
+                                })()}
                             </tbody>
                         </table>
                     </div>
