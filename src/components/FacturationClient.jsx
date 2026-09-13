@@ -1,25 +1,18 @@
 /**
  * FacturationClient.jsx
- * Remplace VersementStripe — Facture multi-lignes avec récurrences mixtes.
- *
- * Chaque ligne a : description, qté, prix unitaire, récurrence (unique / mensuel / trimestriel / annuel)
- * Le formulaire calcule :
- *   - Total one-shot
- *   - MRR équivalent (ramené au mois)
- *   - Projections 1 / 2 / 3 ans
- *
- * Saisie optionnelle du virement Stripe (brut / frais / net).
- * Écritures via garde-fou :
- *   Facturation : Débit 411 / Crédit 706
- *   Si Stripe encaissé : Débit 512, Débit 6278, Crédit 411
+ * Facture multi-lignes avec récurrences mixtes, date de démarrage par abonnement/item,
+ * date d'encaissement quand le client a payé, et gestion des pièces justificatives.
+ * 
+ * Contrainte stricte : AUCUN EMOJI. Design clair, sobre et efficace.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import {
-    collection, getDocs, addDoc, doc, query, orderBy, serverTimestamp,
+    collection, getDocs, addDoc, doc, query, orderBy, serverTimestamp, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
 import { formatMontant } from '../services/helpers';
+import { FileUpload } from './FileUpload';
 
 const RECURRENCES = [
     { value: 'unique', label: 'Ponctuel (une fois)', coefMRR: 0 },
@@ -28,9 +21,18 @@ const RECURRENCES = [
     { value: 'annuel', label: 'Annuel', coefMRR: 1 / 12 },
 ];
 
-const LIGNE_VIDE = () => ({
+const MODES_PAIEMENT = [
+    { value: 'virement', label: 'Virement bancaire' },
+    { value: 'stripe', label: 'Stripe / Prélèvement en ligne' },
+    { value: 'cb', label: 'Carte bancaire' },
+    { value: 'cheque', label: 'Chèque' },
+    { value: 'autre', label: 'Autre mode' },
+];
+
+const LIGNE_VIDE = (defaultDate = '') => ({
     id: Date.now() + Math.random(),
     description: '',
+    dateDebut: defaultDate || new Date().toISOString().split('T')[0],
     quantite: 1,
     prixUnitaire: '',
     recurrence: 'mensuel',
@@ -53,15 +55,28 @@ function computeTotaux(lignes) {
 }
 
 export function FacturationClient() {
+    const todayStr = new Date().toISOString().split('T')[0];
+
     const [clients, setClients] = useState([]);
     const [clientId, setClientId] = useState('');
     const [clientQ, setClientQ] = useState('');
     const [showList, setShowList] = useState(false);
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [lignes, setLignes] = useState([LIGNE_VIDE()]);
+    const [date, setDate] = useState(todayStr);
+
+    // Lignes de facturation
+    const [lignes, setLignes] = useState([LIGNE_VIDE(todayStr)]);
     const [notes, setNotes] = useState('');
-    const [withStripe, setWithStripe] = useState(false);
+
+    // Encaissement / Paiement
+    const [withPayment, setWithPayment] = useState(false);
+    const [datePaiement, setDatePaiement] = useState(todayStr);
+    const [modePaiement, setModePaiement] = useState('virement');
+    const [montantRecuManuel, setMontantRecuManuel] = useState('');
     const [stripe, setStripe] = useState({ brut: '', frais: '', net: '' });
+
+    // Pièces justificatives
+    const [documentIds, setDocumentIds] = useState([]);
+
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [done, setDone] = useState(null);
@@ -73,13 +88,13 @@ export function FacturationClient() {
 
     // Autocomplétion client
     const clientsFiltres = clientQ.length > 0
-        ? clients.filter((c) => `${c.nom} ${c.prenom}`.toLowerCase().includes(clientQ.toLowerCase())).slice(0, 6)
+        ? clients.filter((c) => `${c.nom} ${c.prenom ?? ''}`.toLowerCase().includes(clientQ.toLowerCase())).slice(0, 6)
         : [];
     const clientSelectionne = clients.find((c) => c.id === clientId);
 
     function selectClient(c) {
         setClientId(c.id);
-        setClientQ(`${c.nom} ${c.prenom}`);
+        setClientQ(`${c.nom} ${c.prenom ?? ''}`.trim());
         setShowList(false);
     }
 
@@ -87,7 +102,7 @@ export function FacturationClient() {
     function updateLigne(id, field, value) {
         setLignes((prev) => prev.map((l) => l.id === id ? { ...l, [field]: value } : l));
     }
-    function addLigne() { setLignes((prev) => [...prev, LIGNE_VIDE()]); }
+    function addLigne() { setLignes((prev) => [...prev, LIGNE_VIDE(date)]); }
     function removeLigne(id) { setLignes((prev) => prev.filter((l) => l.id !== id)); }
 
     // Calculs en live
@@ -100,12 +115,19 @@ export function FacturationClient() {
     const strapeBrut = parseFloat(stripe.brut) || 0;
     const stripeFrags = parseFloat(stripe.frais) || 0;
 
-    // Stripe net auto-calc
+    // Calcul automatique net Stripe
     useEffect(() => {
         const b = parseFloat(stripe.brut) || 0;
         const f = parseFloat(stripe.frais) || 0;
-        if (b && f) setStripe((s) => ({ ...s, net: (b - f).toFixed(2) }));
+        if (b && f >= 0) setStripe((s) => ({ ...s, net: (b - f).toFixed(2) }));
     }, [stripe.brut, stripe.frais]);
+
+    // Pré-remplir le montant brut si Stripe activé
+    useEffect(() => {
+        if (withPayment && modePaiement === 'stripe' && totalFacture > 0 && !stripe.brut) {
+            setStripe((s) => ({ ...s, brut: String(totalFacture.toFixed(2)) }));
+        }
+    }, [withPayment, modePaiement, totalFacture, stripe.brut]);
 
     async function handleSubmit(e) {
         e.preventDefault();
@@ -113,50 +135,80 @@ export function FacturationClient() {
         const lignesValides = lignes.filter((l) => l.description.trim() && parseFloat(l.prixUnitaire) > 0);
         if (!lignesValides.length) { setError('Ajoutez au moins une ligne avec description et prix.'); return; }
         if (totalFacture <= 0) { setError('Le total de la facture doit être positif.'); return; }
-        if (withStripe && !strapeBrut) { setError('Saisissez le montant brut Stripe.'); return; }
+
+        if (withPayment) {
+            if (!datePaiement) { setError('Veuillez renseigner la date à laquelle le client a payé.'); return; }
+            if (modePaiement === 'stripe' && !strapeBrut) { setError('Saisissez le montant brut Stripe.'); return; }
+        }
+
         setSaving(true);
 
         try {
-            // Écriture 1 : facturation (411 / 706)
             const libelle = clientSelectionne
                 ? `Facturation — ${clientSelectionne.nom} ${clientSelectionne.prenom ?? ''}`.trim()
-                : 'Facturation client';
+                : (clientQ.trim() ? `Facturation — ${clientQ.trim()}` : 'Facturation client');
 
+            // 1. Écriture de VENTE (Journal VT, à la date de facturation)
             const { ecritureId: ecritureFactId } = await ecrireEcriture({
                 journal: 'VT',
                 date,
                 libelle,
                 sourceType: 'facturation',
                 mouvements: [
-                    { compte: '411', libelle: 'Clients', debit: totalFacture, credit: 0 },
+                    { compte: '411', libelle: clientSelectionne?.nom || 'Clients', debit: totalFacture, credit: 0 },
                     { compte: '706', libelle: 'Prestations de services', debit: 0, credit: totalFacture },
                 ],
             });
 
-            let ecritureStripeId = null;
-            // Écriture 2 : encaissement Stripe (512 + 6278 / 411)
-            if (withStripe && strapeBrut) {
-                const res = await ecrireEcriture({
-                    journal: 'BQ',
-                    date,
-                    libelle: `Encaissement Stripe — ${libelle}`,
-                    sourceType: 'facturation',
-                    mouvements: [
-                        { compte: '512', libelle: 'Banque', debit: stripeNet, credit: 0 },
-                        { compte: '6278', libelle: 'Frais Stripe', debit: stripeFrags, credit: 0 },
-                        { compte: '411', libelle: 'Clients', debit: 0, credit: strapeBrut },
-                    ],
-                });
-                ecritureStripeId = res.ecritureId;
+            let ecriturePaiementId = null;
+
+            // 2. Écriture d'ENCAISSEMENT (Journal BQ, à la DATE OÙ LE CLIENT A PAYÉ)
+            if (withPayment) {
+                if (modePaiement === 'stripe' && strapeBrut > 0) {
+                    const res = await ecrireEcriture({
+                        journal: 'BQ',
+                        date: datePaiement || date,
+                        libelle: `Encaissement Stripe — ${libelle}`,
+                        sourceType: 'facturation',
+                        mouvements: [
+                            { compte: '512', libelle: 'Banque', debit: stripeNet, credit: 0 },
+                            { compte: '6278', libelle: 'Frais Stripe', debit: stripeFrags, credit: 0 },
+                            { compte: '411', libelle: 'Clients', debit: 0, credit: strapeBrut },
+                        ],
+                    });
+                    ecriturePaiementId = res.ecritureId;
+                } else {
+                    const montantEncaisse = parseFloat(montantRecuManuel) || totalFacture;
+                    const res = await ecrireEcriture({
+                        journal: 'BQ',
+                        date: datePaiement || date,
+                        libelle: `Règlement reçu (${modePaiement}) — ${libelle}`,
+                        sourceType: 'facturation',
+                        mouvements: [
+                            { compte: '512', libelle: 'Banque', debit: montantEncaisse, credit: 0 },
+                            { compte: '411', libelle: 'Clients', debit: 0, credit: montantEncaisse },
+                        ],
+                    });
+                    ecriturePaiementId = res.ecritureId;
+                }
             }
 
-            // Sauvegarde Firestore
-            await addDoc(collection(db, 'facturations'), {
+            // 3. Sauvegarde de la Facturation dans Firestore
+            const facturationData = {
                 clientId: clientId || null,
-                clientNom: clientSelectionne ? `${clientSelectionne.nom} ${clientSelectionne.prenom ?? ''}`.trim() : null,
+                clientNom: clientSelectionne
+                    ? `${clientSelectionne.nom} ${clientSelectionne.prenom ?? ''}`.trim()
+                    : (clientQ.trim() || 'Client ponctuel'),
                 date: new Date(date),
+                dateFacturation: date,
+                datePaiement: withPayment && datePaiement ? new Date(datePaiement) : null,
+                datePaiementStr: withPayment ? datePaiement : null,
+                withPayment: !!withPayment,
+                modePaiement: withPayment ? modePaiement : null,
+                statut: withPayment ? 'encaissee' : 'en_attente',
                 lignes: lignesValides.map((l) => ({
                     description: l.description.trim(),
+                    dateDebut: l.dateDebut || date,
                     quantite: parseFloat(l.quantite) || 1,
                     prixUnitaire: parseFloat(l.prixUnitaire),
                     recurrence: l.recurrence,
@@ -166,14 +218,53 @@ export function FacturationClient() {
                 totalOneShot,
                 mrr,
                 totalFacture,
-                withStripe,
-                stripe: withStripe ? { brut: strapeBrut, frais: stripeFrags, net: stripeNet } : null,
+                withStripe: withPayment && modePaiement === 'stripe',
+                stripe: (withPayment && modePaiement === 'stripe')
+                    ? { brut: strapeBrut, frais: stripeFrags, net: stripeNet }
+                    : null,
                 ecritureFactId,
-                ecritureStripeId,
+                ecritureStripeId: ecriturePaiementId,
+                ecriturePaiementId,
+                documentIds: documentIds || [],
                 createdAt: serverTimestamp(),
-            });
+                updatedAt: serverTimestamp(),
+            };
 
-            setDone({ clientNom: clientSelectionne?.nom ?? 'Client', totalFacture, mrr, withStripe });
+            const facturationRef = await addDoc(collection(db, 'facturations'), facturationData);
+
+            // 4. Lier les pièces justificatives au document facturation
+            for (const dId of documentIds) {
+                try {
+                    await updateDoc(doc(db, 'documents', dId), { sourceId: facturationRef.id });
+                } catch (e) {
+                    console.warn('Liaison document justificatif ignoree:', e);
+                }
+            }
+
+            // 5. Renseigner sourceId sur les écritures comptables
+            if (ecritureFactId) {
+                try {
+                    await updateDoc(doc(db, 'ecritures', ecritureFactId), { sourceId: facturationRef.id });
+                } catch (e) {
+                    console.warn('Liaison ecriture facture ignoree:', e);
+                }
+            }
+            if (ecriturePaiementId) {
+                try {
+                    await updateDoc(doc(db, 'ecritures', ecriturePaiementId), { sourceId: facturationRef.id });
+                } catch (e) {
+                    console.warn('Liaison ecriture paiement ignoree:', e);
+                }
+            }
+
+            setDone({
+                clientNom: facturationData.clientNom,
+                totalFacture,
+                mrr,
+                withPayment,
+                datePaiement: withPayment ? datePaiement : null,
+                nbDocuments: documentIds.length,
+            });
         } catch (err) {
             setError(err.message);
         } finally {
@@ -184,11 +275,23 @@ export function FacturationClient() {
     if (done) return (
         <div>
             <div className="notice notice--success">
-                Facturation de {formatMontant(done.totalFacture)} enregistrée pour {done.clientNom}.
+                Facturation de <strong>{formatMontant(done.totalFacture)}</strong> enregistrée pour <strong>{done.clientNom}</strong>.
                 {done.mrr > 0 && ` MRR généré : ${formatMontant(done.mrr)} / mois.`}
-                {done.withStripe && ' Encaissement Stripe comptabilisé.'}
+                {done.withPayment && ` Encaissement comptabilisé au ${done.datePaiement}.`}
+                {done.nbDocuments > 0 && ` (${done.nbDocuments} justificatif(s) rattaché(s)).`}
             </div>
-            <button className="btn btn--primary" onClick={() => { setDone(null); setLignes([LIGNE_VIDE()]); setStripe({ brut: '', frais: '', net: '' }); setClientId(''); setClientQ(''); }}>
+            <button
+                className="btn btn--primary"
+                onClick={() => {
+                    setDone(null);
+                    setLignes([LIGNE_VIDE(todayStr)]);
+                    setStripe({ brut: '', frais: '', net: '' });
+                    setClientId('');
+                    setClientQ('');
+                    setDocumentIds([]);
+                    setWithPayment(false);
+                }}
+            >
                 Nouvelle facturation
             </button>
         </div>
@@ -198,8 +301,10 @@ export function FacturationClient() {
         <form onSubmit={handleSubmit}>
             <div className="page-header">
                 <div>
-                    <h1>Facturation client</h1>
-                    <p>Facture multi-lignes avec récurrences mixtes — génère les écritures comptables</p>
+                    <h1 style={{ margin: 0 }}>Facturation client</h1>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                        Facture multi-lignes avec récurrences mixtes, date de démarrage par abonnement et justificatifs.
+                    </p>
                 </div>
             </div>
 
@@ -215,8 +320,8 @@ export function FacturationClient() {
                             type="text" className="form-input"
                             value={clientQ}
                             onChange={(e) => { setClientQ(e.target.value); setClientId(''); setShowList(true); }}
-                            onBlur={() => setTimeout(() => setShowList(false), 150)}
-                            placeholder="Rechercher un client..."
+                            onBlur={() => setTimeout(() => setShowList(false), 200)}
+                            placeholder="Rechercher ou saisir un nom de client..."
                         />
                         {showList && clientsFiltres.length > 0 && (
                             <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-md)', marginTop: 2 }}>
@@ -226,16 +331,20 @@ export function FacturationClient() {
                                         onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg2)'}
                                         onMouseLeave={(e) => e.currentTarget.style.background = ''}
                                     >
-                                        {c.nom} {c.prenom}
-                                        {c.categorieNom && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>{c.categorieNom}</span>}
+                                        <div style={{ fontWeight: 600 }}>{c.nom}</div>
+                                        {(c.contactPrenom || c.email) && (
+                                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                                {[c.contactPrenom, c.contactNom, c.email].filter(Boolean).join(' · ')}
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
                         )}
-                        {!clientId && clientQ && <p className="form-hint">Client non sélectionné — la facture sera sans rattachement.</p>}
+                        {!clientId && clientQ && <p className="form-hint">Client libre — la facture sera enregistrée avec ce libellé.</p>}
                     </div>
                     <div className="form-group">
-                        <label className="form-label">Date de facturation</label>
+                        <label className="form-label">Date d'émission de la facture</label>
                         <input type="date" className="form-input" value={date} onChange={(e) => setDate(e.target.value)} required />
                     </div>
                 </div>
@@ -244,51 +353,80 @@ export function FacturationClient() {
             {/* Lignes de facturation */}
             <div className="card">
                 <div className="card__title" style={{ justifyContent: 'space-between' }}>
-                    <span>Lignes de la facture</span>
+                    <span>Lignes de la facture & Démarrage des abonnements</span>
                     <button type="button" className="btn btn--ghost btn--sm" onClick={addLigne}>+ Ajouter une ligne</button>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {/* En-têtes */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 80px 120px 160px 40px', gap: 8, fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', paddingBottom: 4, borderBottom: '1px solid var(--border)' }}>
-                        <span>Description</span><span style={{ textAlign: 'center' }}>Qté</span><span>Prix unitaire</span><span>Récurrence</span><span></span>
-                    </div>
-
-                    {lignes.map((l, idx) => (
-                        <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '2fr 80px 120px 160px 40px', gap: 8, alignItems: 'center' }}>
-                            <input
-                                type="text" className="form-input"
-                                value={l.description}
-                                onChange={(e) => updateLigne(l.id, 'description', e.target.value)}
-                                placeholder={`Produit / Prestation ${idx + 1}`}
-                            />
-                            <input
-                                type="number" min="1" step="1" className="form-input"
-                                value={l.quantite}
-                                onChange={(e) => updateLigne(l.id, 'quantite', e.target.value)}
-                                style={{ textAlign: 'center' }}
-                            />
-                            <div style={{ position: 'relative' }}>
-                                <input
-                                    type="number" min="0.01" step="0.01" className="form-input"
-                                    value={l.prixUnitaire}
-                                    onChange={(e) => updateLigne(l.id, 'prixUnitaire', e.target.value)}
-                                    placeholder="0.00"
-                                    style={{ paddingRight: 24 }}
-                                />
-                                <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 12, pointerEvents: 'none' }}>€</span>
-                            </div>
-                            <select className="form-select" value={l.recurrence} onChange={(e) => updateLigne(l.id, 'recurrence', e.target.value)}>
-                                {RECURRENCES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                            </select>
-                            <button type="button" className="btn btn--sm btn--danger btn--icon"
-                                onClick={() => removeLigne(l.id)}
-                                disabled={lignes.length === 1}
-                                style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                title="Supprimer cette ligne"
-                            >×</button>
+                <div style={{ overflowX: 'auto' }}>
+                    <div style={{ minWidth: 700, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {/* En-têtes */}
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '2fr 135px 65px 110px 145px 36px',
+                            gap: 8,
+                            fontSize: 11,
+                            color: 'var(--text-muted)',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                            paddingBottom: 6,
+                            borderBottom: '1px solid var(--border)',
+                        }}>
+                            <span>Description</span>
+                            <span>Date de début</span>
+                            <span style={{ textAlign: 'center' }}>Qté</span>
+                            <span>Prix unitaire</span>
+                            <span>Récurrence</span>
+                            <span></span>
                         </div>
-                    ))}
+
+                        {lignes.map((l, idx) => (
+                            <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '2fr 135px 65px 110px 145px 36px', gap: 8, alignItems: 'center' }}>
+                                <input
+                                    type="text" className="form-input"
+                                    value={l.description}
+                                    onChange={(e) => updateLigne(l.id, 'description', e.target.value)}
+                                    placeholder={`Prestation / Abonnement ${idx + 1}`}
+                                />
+                                <input
+                                    type="date" className="form-input"
+                                    value={l.dateDebut || date}
+                                    onChange={(e) => updateLigne(l.id, 'dateDebut', e.target.value)}
+                                    title="Date à laquelle l'abonnement ou la prestation commence"
+                                    style={{ fontSize: 12 }}
+                                />
+                                <input
+                                    type="number" min="1" step="1" className="form-input"
+                                    value={l.quantite}
+                                    onChange={(e) => updateLigne(l.id, 'quantite', e.target.value)}
+                                    style={{ textAlign: 'center' }}
+                                />
+                                <div style={{ position: 'relative' }}>
+                                    <input
+                                        type="number" min="0.01" step="0.01" className="form-input"
+                                        value={l.prixUnitaire}
+                                        onChange={(e) => updateLigne(l.id, 'prixUnitaire', e.target.value)}
+                                        placeholder="0.00"
+                                        style={{ paddingRight: 22 }}
+                                    />
+                                    <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 12, pointerEvents: 'none' }}>€</span>
+                                </div>
+                                <select className="form-select" value={l.recurrence} onChange={(e) => updateLigne(l.id, 'recurrence', e.target.value)}>
+                                    {RECURRENCES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                </select>
+                                <button
+                                    type="button"
+                                    className="btn btn--sm btn--danger btn--icon"
+                                    onClick={() => removeLigne(l.id)}
+                                    disabled={lignes.length === 1}
+                                    style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title="Supprimer cette ligne"
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        ))}
+                    </div>
                 </div>
 
                 {/* Notes */}
@@ -316,60 +454,195 @@ export function FacturationClient() {
                 </div>
             )}
 
-            {/* Encaissement Stripe */}
+            {/* Encaissement & Date de Paiement du Client */}
             <div className="card">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: withStripe ? 16 : 0 }}>
-                    <input type="checkbox" id="with-stripe" checked={withStripe} onChange={(e) => setWithStripe(e.target.checked)} style={{ width: 16, height: 16 }} />
-                    <label htmlFor="with-stripe" style={{ fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-                        Enregistrer l'encaissement Stripe en même temps (virement déjà reçu)
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: withPayment ? 16 : 0 }}>
+                    <input
+                        type="checkbox"
+                        id="with-payment"
+                        checked={withPayment}
+                        onChange={(e) => setWithPayment(e.target.checked)}
+                        style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    />
+                    <label htmlFor="with-payment" style={{ fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                        Enregistrer l'encaissement / règlement en même temps (le client a déjà payé)
                     </label>
                 </div>
-                {withStripe && (
-                    <div className="form-row form-row--3">
-                        <div className="form-group">
-                            <label className="form-label">Montant brut Stripe (€)</label>
-                            <input type="number" min="0.01" step="0.01" className="form-input" value={stripe.brut}
-                                onChange={(e) => setStripe((s) => ({ ...s, brut: e.target.value }))} placeholder="Ex. 100.00" />
+
+                {withPayment && (
+                    <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                        <div className="form-row" style={{ marginBottom: 14 }}>
+                            <div className="form-group">
+                                <label className="form-label">Date à laquelle le client a payé *</label>
+                                <input
+                                    type="date"
+                                    className="form-input"
+                                    value={datePaiement}
+                                    onChange={(e) => setDatePaiement(e.target.value)}
+                                    required={withPayment}
+                                />
+                                <span className="form-hint">L'écriture de banque sera enregistrée à cette date exacte.</span>
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">Mode de règlement</label>
+                                <select
+                                    className="form-select"
+                                    value={modePaiement}
+                                    onChange={(e) => setModePaiement(e.target.value)}
+                                >
+                                    {MODES_PAIEMENT.map((m) => (
+                                        <option key={m.value} value={m.value}>{m.label}</option>
+                                    ))}
+                                </select>
+                            </div>
                         </div>
-                        <div className="form-group">
-                            <label className="form-label">Frais Stripe (€)</label>
-                            <input type="number" min="0" step="0.01" className="form-input" value={stripe.frais}
-                                onChange={(e) => setStripe((s) => ({ ...s, frais: e.target.value }))} placeholder="Ex. 2.25" />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Net reçu (€)</label>
-                            <input type="number" min="0.01" step="0.01" className="form-input" value={stripe.net}
-                                onChange={(e) => setStripe((s) => ({ ...s, net: e.target.value }))} placeholder="Auto-calculé" />
-                        </div>
+
+                        {modePaiement === 'stripe' ? (
+                            <div className="form-row form-row--3">
+                                <div className="form-group">
+                                    <label className="form-label">Montant brut Stripe (€)</label>
+                                    <input
+                                        type="number" min="0.01" step="0.01" className="form-input"
+                                        value={stripe.brut}
+                                        onChange={(e) => setStripe((s) => ({ ...s, brut: e.target.value }))}
+                                        placeholder="Ex. 100.00"
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Frais Stripe déduits (€)</label>
+                                    <input
+                                        type="number" min="0" step="0.01" className="form-input"
+                                        value={stripe.frais}
+                                        onChange={(e) => setStripe((s) => ({ ...s, frais: e.target.value }))}
+                                        placeholder="Ex. 2.25"
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Net reçu en banque (€)</label>
+                                    <input
+                                        type="number" min="0.01" step="0.01" className="form-input"
+                                        value={stripe.net}
+                                        onChange={(e) => setStripe((s) => ({ ...s, net: e.target.value }))}
+                                        placeholder="Auto-calculé"
+                                    />
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="form-group" style={{ maxWidth: 300 }}>
+                                <label className="form-label">Montant net encaissé (€)</label>
+                                <input
+                                    type="number"
+                                    min="0.01"
+                                    step="0.01"
+                                    className="form-input"
+                                    placeholder={totalFacture ? totalFacture.toFixed(2) : '0.00'}
+                                    value={montantRecuManuel}
+                                    onChange={(e) => setMontantRecuManuel(e.target.value)}
+                                />
+                                <span className="form-hint">Par défaut le montant total de la facture ({formatMontant(totalFacture)}).</span>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
 
-            {/* Aperçu écritures */}
+            {/* Pièces Justificatives dans les Recettes */}
+            <div className="card">
+                <div className="card__title">Pièces justificatives (Facture émise, devis, reçu)</div>
+                <p className="form-hint" style={{ marginBottom: 12 }}>
+                    Joignez vos factures clients PDF ou justificatifs d'encaissement. Ils seront archivés et consultables sur l'opération.
+                </p>
+                <FileUpload
+                    sourceType="facturation"
+                    sourceId={null}
+                    onUploaded={({ documentId }) => setDocumentIds((prev) => [...prev, documentId])}
+                />
+            </div>
+
+            {/* Aperçu écritures comptables */}
             {totalFacture > 0 && (
-                <div className="card" style={{ borderColor: '#2563eb' }}>
-                    <div className="card__title">Ecritures générées</div>
+                <div className="card" style={{ borderColor: 'var(--accent)' }}>
+                    <div className="card__title">Écritures comptables générées</div>
                     <div className="table-wrap">
                         <table>
-                            <thead><tr><th>Journal</th><th>Compte</th><th>Libellé</th><th style={{ textAlign: 'right' }}>Débit</th><th style={{ textAlign: 'right' }}>Crédit</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Journal</th>
+                                    <th>Compte</th>
+                                    <th>Libellé</th>
+                                    <th style={{ textAlign: 'right' }}>Débit</th>
+                                    <th style={{ textAlign: 'right' }}>Crédit</th>
+                                </tr>
+                            </thead>
                             <tbody>
-                                <tr><td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>VT</td><td><code>411</code></td><td>Clients</td><td style={{ textAlign: 'right' }}>{formatMontant(totalFacture)}</td><td style={{ textAlign: 'right' }}>—</td></tr>
-                                <tr><td><code>706</code></td><td>Prestations</td><td style={{ textAlign: 'right' }}>—</td><td style={{ textAlign: 'right' }}>{formatMontant(totalFacture)}</td></tr>
-                                {withStripe && strapeBrut > 0 && <>
-                                    <tr style={{ borderTop: '2px dashed var(--border)' }}>
-                                        <td rowSpan={3} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
-                                        <td><code>512</code></td><td>Banque</td><td style={{ textAlign: 'right' }}>{formatMontant(stripeNet)}</td><td style={{ textAlign: 'right' }}>—</td>
-                                    </tr>
-                                    <tr><td><code>6278</code></td><td>Frais Stripe</td><td style={{ textAlign: 'right' }}>{formatMontant(stripeFrags)}</td><td style={{ textAlign: 'right' }}>—</td></tr>
-                                    <tr><td><code>411</code></td><td>Clients</td><td style={{ textAlign: 'right' }}>—</td><td style={{ textAlign: 'right' }}>{formatMontant(strapeBrut)}</td></tr>
-                                </>}
+                                <tr>
+                                    <td rowSpan={2} style={{ fontSize: 12 }}>{date}</td>
+                                    <td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>VT</td>
+                                    <td><code>411</code></td>
+                                    <td>Clients</td>
+                                    <td style={{ textAlign: 'right' }}>{formatMontant(totalFacture)}</td>
+                                    <td style={{ textAlign: 'right' }}>—</td>
+                                </tr>
+                                <tr>
+                                    <td><code>706</code></td>
+                                    <td>Prestations de services</td>
+                                    <td style={{ textAlign: 'right' }}>—</td>
+                                    <td style={{ textAlign: 'right' }}>{formatMontant(totalFacture)}</td>
+                                </tr>
+
+                                {withPayment && (
+                                    <>
+                                        {modePaiement === 'stripe' && strapeBrut > 0 ? (
+                                            <>
+                                                <tr style={{ borderTop: '2px dashed var(--border)' }}>
+                                                    <td rowSpan={3} style={{ fontSize: 12 }}>{datePaiement || date}</td>
+                                                    <td rowSpan={3} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
+                                                    <td><code>512</code></td>
+                                                    <td>Banque</td>
+                                                    <td style={{ textAlign: 'right' }}>{formatMontant(stripeNet)}</td>
+                                                    <td style={{ textAlign: 'right' }}>—</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><code>6278</code></td>
+                                                    <td>Frais Stripe</td>
+                                                    <td style={{ textAlign: 'right' }}>{formatMontant(stripeFrags)}</td>
+                                                    <td style={{ textAlign: 'right' }}>—</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><code>411</code></td>
+                                                    <td>Clients</td>
+                                                    <td style={{ textAlign: 'right' }}>—</td>
+                                                    <td style={{ textAlign: 'right' }}>{formatMontant(strapeBrut)}</td>
+                                                </tr>
+                                            </>
+                                        ) : (
+                                            <tr style={{ borderTop: '2px dashed var(--border)' }}>
+                                                <td rowSpan={2} style={{ fontSize: 12 }}>{datePaiement || date}</td>
+                                                <td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
+                                                <td><code>512</code></td>
+                                                <td>Banque</td>
+                                                <td style={{ textAlign: 'right' }}>{formatMontant(parseFloat(montantRecuManuel) || totalFacture)}</td>
+                                                <td style={{ textAlign: 'right' }}>—</td>
+                                            </tr>
+                                        )}
+                                        {modePaiement !== 'stripe' && (
+                                            <tr>
+                                                <td><code>411</code></td>
+                                                <td>Clients</td>
+                                                <td style={{ textAlign: 'right' }}>—</td>
+                                                <td style={{ textAlign: 'right' }}>{formatMontant(parseFloat(montantRecuManuel) || totalFacture)}</td>
+                                            </tr>
+                                        )}
+                                    </>
+                                )}
                             </tbody>
                         </table>
                     </div>
                 </div>
             )}
 
-            <button type="submit" className="btn btn--primary" disabled={saving} style={{ minWidth: 200 }}>
+            <button type="submit" className="btn btn--primary" disabled={saving} style={{ minWidth: 220 }}>
                 {saving ? 'Enregistrement...' : 'Enregistrer la facturation'}
             </button>
         </form>

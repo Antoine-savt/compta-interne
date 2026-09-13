@@ -64,9 +64,23 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
             if (srcType === 'depense' && srcId) {
                 const dSnap = await getDoc(doc(db, 'depenses', srcId));
                 if (dSnap.exists()) srcDoc = { id: dSnap.id, ...dSnap.data() };
-            } else if (srcType === 'facture' && srcId) {
-                const fSnap = await getDoc(doc(db, 'factures', srcId));
+            } else if ((srcType === 'facture' || srcType === 'facturation') && srcId) {
+                let fSnap = await getDoc(doc(db, 'factures', srcId));
+                if (!fSnap.exists()) {
+                    fSnap = await getDoc(doc(db, 'facturations', srcId));
+                }
                 if (fSnap.exists()) srcDoc = { id: fSnap.id, ...fSnap.data() };
+            } else if (srcType === 'facturation' && !srcId) {
+                // Recherche dans facturations par ecritureFactId ou ecritureStripeId ou ecriturePaiementId
+                const qFac1 = query(collection(db, 'facturations'), where('ecritureFactId', '==', targetId));
+                const qSnap1 = await getDocs(qFac1);
+                if (!qSnap1.empty) {
+                    srcDoc = { id: qSnap1.docs[0].id, ...qSnap1.docs[0].data() };
+                } else {
+                    const qFac2 = query(collection(db, 'facturations'), where('ecritureStripeId', '==', targetId));
+                    const qSnap2 = await getDocs(qFac2);
+                    if (!qSnap2.empty) srcDoc = { id: qSnap2.docs[0].id, ...qSnap2.docs[0].data() };
+                }
             } else if (srcType === 'cca_apport' || srcType === 'cca_remboursement') {
                 // Trouver le mouvement CCA par ecritureId ou sourceId
                 if (srcId) {
@@ -90,9 +104,10 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
                 if (docSnap.exists()) foundDocs.push({ id: docSnap.id, ...docSnap.data() });
             }
 
-            // B. Par sourceId == targetId ou sourceId == ecData.sourceId
+            // B. Par sourceId == targetId ou sourceId == ecData.sourceId ou sourceId == srcDoc.id
             const idsToCheck = [targetId];
             if (ecData.sourceId) idsToCheck.push(ecData.sourceId);
+            if (srcDoc?.id && !idsToCheck.includes(srcDoc.id)) idsToCheck.push(srcDoc.id);
 
             for (const idVal of idsToCheck) {
                 const qDoc = query(collection(db, 'documents'), where('sourceId', '==', idVal));

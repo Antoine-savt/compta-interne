@@ -32,7 +32,7 @@ import {
 import { db } from '../firebase';
 import { invalidateEcrituresCache } from '../services/comptaService';
 import { invalidateCache } from '../services/dataCache';
-import { formatMontant, formatDate } from '../services/helpers';
+import { formatMontant, formatDate, calculerTTCdepuisHT } from '../services/helpers';
 import { FileUpload } from './FileUpload';
 
 const CATEGORIES_DEPENSES = [
@@ -150,7 +150,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     sType = 'capital_initial';
                 } else if (ecData.journal === 'AC') {
                     sType = 'depense';
-                } else if (ecData.journal === 'VE') {
+                } else if (ecData.journal === 'VE' || ecData.journal === 'VT' || ecData.sourceType === 'facturation') {
                     sType = 'facture';
                 } else if (ecData.libelle?.toLowerCase().includes('cca') || ecData.mouvements?.some((m) => m.compte?.startsWith('455'))) {
                     sType = 'cca';
@@ -161,6 +161,9 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
             if (sType?.startsWith('cca')) {
                 sType = 'cca';
+            }
+            if (sType === 'facturation') {
+                sType = 'facture';
             }
 
             setOperationType(sType || 'depense');
@@ -249,20 +252,28 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                 setCapMontant(conf.capitalInitial ? String(conf.capitalInitial) : (ecData?.mouvements?.[0]?.debit ? String(ecData.mouvements[0].debit) : '1000'));
                 setCapDate(conf.dateCreation || (ecData?.date?.toDate ? ecData.date.toDate().toISOString().split('T')[0] : '2026-01-01'));
                 setCapBanque(conf.banqueDepot || 'Banque');
-            } else if (sType === 'facture') {
+            } else if (sType === 'facture' || sType === 'facturation') {
                 let fData = null;
                 if (sId) {
-                    const fSnap = await getDoc(doc(db, 'factures', sId));
+                    let fSnap = await getDoc(doc(db, 'factures', sId));
+                    if (!fSnap.exists()) fSnap = await getDoc(doc(db, 'facturations', sId));
                     if (fSnap.exists()) fData = { id: fSnap.id, ...fSnap.data() };
+                } else if (ecData?.id) {
+                    const qF1 = query(collection(db, 'facturations'), where('ecritureFactId', '==', ecData.id));
+                    const qS1 = await getDocs(qF1);
+                    if (!qS1.empty) {
+                        fData = { id: qS1.docs[0].id, ...qS1.docs[0].data() };
+                        setActualSourceId(fData.id);
+                    }
                 }
                 if (fData) {
                     setSourceData(fData);
                     setFacClientId(fData.clientId || '');
                     setFacClientNom(fData.clientNom || '');
-                    const fDate = fData.date?.toDate ? fData.date.toDate() : new Date(fData.date || Date.now());
-                    setFacDate(!isNaN(fDate) ? fDate.toISOString().split('T')[0] : '');
-                    setFacDescription(fData.description || '');
-                    setFacMontantHT(fData.totalHT ? String(fData.totalHT) : String(fData.totalTTC || ''));
+                    const rawDate = fData.date?.toDate ? fData.date.toDate() : new Date(fData.date || fData.dateFacturation || Date.now());
+                    setFacDate(!isNaN(rawDate) ? rawDate.toISOString().split('T')[0] : '');
+                    setFacDescription(fData.description || fData.lignes?.map((l) => l.description).join(', ') || '');
+                    setFacMontantHT(fData.totalHT ? String(fData.totalHT) : String(fData.totalFacture || fData.totalTTC || ''));
                     setFacTvaOn(!!fData.tvaActive);
                     setFacTauxTVA(fData.tauxTVA || 20);
                     setFacStatut(fData.statut || 'encaissee');
@@ -582,6 +593,82 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                 });
 
                 setSuccessMsg('Capital social et date initiale mis à jour avec succès.');
+            } else if (operationType === 'facture') {
+                const montantHTNum = parseFloat(facMontantHT);
+                if (isNaN(montantHTNum) || montantHTNum <= 0) throw new Error('Montant de facture invalide.');
+                if (!facDate) throw new Error('Date de facture requise.');
+
+                const { ht, tva, ttc } = facTvaOn
+                    ? calculerTTCdepuisHT(montantHTNum, facTauxTVA)
+                    : { ht: montantHTNum, tva: 0, ttc: montantHTNum };
+
+                const clientObj = clients.find((c) => c.id === facClientId);
+                const nomClientFinal = clientObj ? clientObj.nom : (facClientNom.trim() || 'Client');
+                const libelleFact = `Facturation — ${nomClientFinal} — ${facDescription.trim() || 'Prestation'}`;
+
+                const mvtsVente = facTvaOn && tva > 0
+                    ? [
+                        { compte: '411', libelle: `Client ${nomClientFinal}`, debit: ttc, credit: 0 },
+                        { compte: '706', libelle: 'Prestations de services', debit: 0, credit: ht },
+                        { compte: '44571', libelle: `TVA collectée (${facTauxTVA}%)`, debit: 0, credit: tva },
+                    ]
+                    : [
+                        { compte: '411', libelle: `Client ${nomClientFinal}`, debit: ttc, credit: 0 },
+                        { compte: '706', libelle: 'Prestations de services', debit: 0, credit: ttc },
+                    ];
+
+                let ecId = activeEcriture?.id;
+                let targetFactId = actualSourceId;
+
+                if (ecId) {
+                    await updateDoc(doc(db, 'ecritures', ecId), {
+                        date: new Date(facDate),
+                        libelle: libelleFact,
+                        mouvements: mvtsVente,
+                        sourceId: targetFactId || null,
+                        sourceType: 'facturation',
+                        updatedAt: serverTimestamp(),
+                    });
+                }
+
+                const factPayload = {
+                    clientId: facClientId || null,
+                    clientNom: nomClientFinal,
+                    date: new Date(facDate),
+                    dateFacturation: facDate,
+                    description: facDescription.trim(),
+                    totalHT: ht,
+                    totalTVA: tva,
+                    totalTTC: ttc,
+                    totalFacture: ttc,
+                    tvaActive: facTvaOn,
+                    tauxTVA: facTvaOn ? facTauxTVA : null,
+                    statut: facStatut,
+                    documentIds,
+                    updatedAt: serverTimestamp(),
+                };
+
+                if (targetFactId) {
+                    const ref1 = doc(db, 'facturations', targetFactId);
+                    const s1 = await getDoc(ref1);
+                    if (s1.exists()) {
+                        await updateDoc(ref1, factPayload);
+                    } else {
+                        await updateDoc(doc(db, 'factures', targetFactId), factPayload);
+                    }
+                }
+
+                for (const dId of documentIds) {
+                    try {
+                        await updateDoc(doc(db, 'documents', dId), { sourceId: targetFactId || ecId });
+                    } catch (e) {
+                        console.warn('Liaison document ignoree:', e);
+                    }
+                }
+
+                invalidateCache('factures');
+                invalidateCache('facturations');
+                setSuccessMsg('Facturation et écritures comptables mises à jour avec succès.');
             } else if (operationType === 'od' || !sourceData) {
                 // Écriture générale modifiée directement
                 if (!activeEcriture?.id) throw new Error('Aucune écriture sélectionnée.');
