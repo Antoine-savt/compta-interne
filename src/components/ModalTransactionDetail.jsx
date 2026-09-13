@@ -195,12 +195,12 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
 
     // Libellé de source clair
     let sourceLabel = 'Écriture diverse';
-    if (ecriture?.sourceType === 'capital_initial') sourceLabel = '🏢 Dépôt de capital social initial';
-    else if (ecriture?.sourceType === 'cca_apport') sourceLabel = '💼 Apport en compte courant d\'associé (CCA)';
-    else if (ecriture?.sourceType === 'cca_remboursement') sourceLabel = '↩️ Remboursement compte courant associé';
-    else if (ecriture?.sourceType === 'depense') sourceLabel = '🧾 Dépense d\'exploitation / Fournisseur';
-    else if (ecriture?.sourceType === 'facture') sourceLabel = '📄 Facturation client';
-    else if (ecriture?.sourceType === 'contrepassation') sourceLabel = '🔄 Contre-passation d\'annulation';
+    if (ecriture?.sourceType === 'capital_initial') sourceLabel = 'Dépôt de capital social initial';
+    else if (ecriture?.sourceType === 'cca_apport') sourceLabel = 'Apport en compte courant d\'associé (CCA)';
+    else if (ecriture?.sourceType === 'cca_remboursement') sourceLabel = 'Remboursement compte courant associé';
+    else if (ecriture?.sourceType === 'depense') sourceLabel = 'Dépense d\'exploitation / Fournisseur';
+    else if (ecriture?.sourceType === 'facture' || ecriture?.sourceType === 'facturation') sourceLabel = 'Facturation client';
+    else if (ecriture?.sourceType === 'contrepassation') sourceLabel = 'Contre-passation d\'annulation';
 
     return (
         <div style={{
@@ -239,7 +239,6 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
                     background: 'var(--bg2)',
                 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 18 }}>🔍</span>
                         <div>
                             <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: 'var(--text)' }}>
                                 Détail de la transaction
@@ -319,6 +318,69 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
                                 </div>
                             </div>
 
+                            {/* Dates spécifiques de règlement / virement & détails Stripe */}
+                            {sourceDoc && (sourceDoc.datePaiement || sourceDoc.dateVirementStripe || sourceDoc.dateFacturation || sourceDoc.stripe) && (
+                                <div style={{
+                                    background: 'var(--bg2)',
+                                    borderRadius: 8,
+                                    border: '1px solid var(--border)',
+                                    marginBottom: 16,
+                                    padding: '12px 14px',
+                                }}>
+                                    <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        {sourceDoc.dateFacturation && (
+                                            <div>
+                                                <span style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Facturation :</span>
+                                                <strong>{formatDate(sourceDoc.dateFacturation)}</strong>
+                                            </div>
+                                        )}
+                                        {sourceDoc.datePaiement && (
+                                            <div>
+                                                <span style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Paiement client :</span>
+                                                <strong>{formatDate(sourceDoc.datePaiement)}</strong>
+                                            </div>
+                                        )}
+                                        {sourceDoc.dateVirementStripe && (
+                                            <div>
+                                                <span style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Virement Stripe vers compte :</span>
+                                                <strong style={{ color: 'var(--accent)' }}>{formatDate(sourceDoc.dateVirementStripe)}</strong>
+                                            </div>
+                                        )}
+                                        {sourceDoc.modePaiement && (
+                                            <div>
+                                                <span style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Mode de règlement :</span>
+                                                <span className="badge badge--muted">{sourceDoc.modePaiement}</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {sourceDoc.stripe && (
+                                        <div style={{
+                                            marginTop: 10,
+                                            paddingTop: 10,
+                                            borderTop: '1px solid var(--border)',
+                                            display: 'grid',
+                                            gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                                            gap: 10,
+                                            fontSize: 12,
+                                        }}>
+                                            <div>
+                                                <span style={{ color: 'var(--text-muted)', display: 'block' }}>Brut Stripe :</span>
+                                                <span style={{ fontWeight: 600 }}>{formatMontant(sourceDoc.stripe.brut)}</span>
+                                            </div>
+                                            <div>
+                                                <span style={{ color: 'var(--text-muted)', display: 'block' }}>Frais Stripe :</span>
+                                                <span style={{ fontWeight: 600, color: 'var(--danger)' }}>-{formatMontant(sourceDoc.stripe.frais)}</span>
+                                            </div>
+                                            <div>
+                                                <span style={{ color: 'var(--text-muted)', display: 'block' }}>Net viré sur compte (512) :</span>
+                                                <span style={{ fontWeight: 700, color: 'var(--success)' }}>{formatMontant(sourceDoc.stripe.net)}</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Libellé complet */}
                             <div style={{ marginBottom: 20 }}>
                                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Libellé complet :</div>
@@ -341,7 +403,7 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
                                         Écriture comptable (Partie double)
                                     </div>
                                     <span style={{ fontSize: 12, color: estEquilibre ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
-                                        {estEquilibre ? '✓ Écriture équilibrée' : '⚠️ Écriture déséquilibrée'}
+                                        {estEquilibre ? 'Écriture équilibrée' : 'Écriture déséquilibrée'}
                                     </span>
                                 </div>
                                 <div className="table-wrap" style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
@@ -392,8 +454,8 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
                                 marginBottom: 20,
                             }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                                    <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <span>📎</span> Justificatifs & Pièces jointes ({documents.length})
+                                    <div style={{ fontWeight: 600, fontSize: 13 }}>
+                                        Justificatifs & Pièces jointes ({documents.length})
                                     </div>
                                     <button
                                         type="button"
@@ -426,7 +488,9 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
                                                 }}
                                             >
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
-                                                    <span>{docItem.type === 'pdf' || docItem.nom?.endsWith('.pdf') ? '📄' : '🖼️'}</span>
+                                                    <span className="badge badge--muted" style={{ fontSize: 10, padding: '2px 5px' }}>
+                                                        {docItem.type === 'pdf' || docItem.nom?.endsWith('.pdf') ? 'PDF' : 'FICHIER'}
+                                                    </span>
                                                     <span style={{ fontSize: 13, fontWeight: 500, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                                                         {docItem.nom}
                                                     </span>

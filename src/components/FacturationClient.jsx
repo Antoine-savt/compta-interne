@@ -1,7 +1,10 @@
 /**
  * FacturationClient.jsx
- * Facture multi-lignes avec récurrences mixtes, date de démarrage par abonnement/item,
- * date d'encaissement quand le client a payé, et gestion des pièces justificatives.
+ * Facture multi-lignes avec récurrences mixtes :
+ * - Date de démarrage par item / abonnement
+ * - Date du paiement par le client
+ * - Date du virement de Stripe vers le compte bancaire (payout)
+ * - Pièces justificatives / factures PDF
  * 
  * Contrainte stricte : AUCUN EMOJI. Design clair, sobre et efficace.
  */
@@ -22,8 +25,8 @@ const RECURRENCES = [
 ];
 
 const MODES_PAIEMENT = [
-    { value: 'virement', label: 'Virement bancaire' },
     { value: 'stripe', label: 'Stripe / Prélèvement en ligne' },
+    { value: 'virement', label: 'Virement bancaire' },
     { value: 'cb', label: 'Carte bancaire' },
     { value: 'cheque', label: 'Chèque' },
     { value: 'autre', label: 'Autre mode' },
@@ -67,10 +70,12 @@ export function FacturationClient() {
     const [lignes, setLignes] = useState([LIGNE_VIDE(todayStr)]);
     const [notes, setNotes] = useState('');
 
-    // Encaissement / Paiement
+    // Encaissement & Dates de paiement / virement Stripe
     const [withPayment, setWithPayment] = useState(false);
-    const [datePaiement, setDatePaiement] = useState(todayStr);
-    const [modePaiement, setModePaiement] = useState('virement');
+    const [datePaiement, setDatePaiement] = useState(todayStr); // Date à laquelle le client a payé
+    const [modePaiement, setModePaiement] = useState('stripe');
+    const [virementRecu, setVirementRecu] = useState(true); // L'argent a-t-il été viré de Stripe vers le compte bancaire
+    const [dateVirementStripe, setDateVirementStripe] = useState(todayStr); // Date du virement de Stripe vers le compte
     const [montantRecuManuel, setMontantRecuManuel] = useState('');
     const [stripe, setStripe] = useState({ brut: '', frais: '', net: '' });
 
@@ -138,7 +143,13 @@ export function FacturationClient() {
 
         if (withPayment) {
             if (!datePaiement) { setError('Veuillez renseigner la date à laquelle le client a payé.'); return; }
-            if (modePaiement === 'stripe' && !strapeBrut) { setError('Saisissez le montant brut Stripe.'); return; }
+            if (modePaiement === 'stripe') {
+                if (!strapeBrut) { setError('Saisissez le montant brut Stripe.'); return; }
+                if (virementRecu && !dateVirementStripe) {
+                    setError('Veuillez renseigner la date du virement de Stripe vers votre compte bancaire.');
+                    return;
+                }
+            }
         }
 
         setSaving(true);
@@ -162,21 +173,24 @@ export function FacturationClient() {
 
             let ecriturePaiementId = null;
 
-            // 2. Écriture d'ENCAISSEMENT (Journal BQ, à la DATE OÙ LE CLIENT A PAYÉ)
+            // 2. Écriture d'ENCAISSEMENT (Journal BQ)
             if (withPayment) {
                 if (modePaiement === 'stripe' && strapeBrut > 0) {
-                    const res = await ecrireEcriture({
-                        journal: 'BQ',
-                        date: datePaiement || date,
-                        libelle: `Encaissement Stripe — ${libelle}`,
-                        sourceType: 'facturation',
-                        mouvements: [
-                            { compte: '512', libelle: 'Banque', debit: stripeNet, credit: 0 },
-                            { compte: '6278', libelle: 'Frais Stripe', debit: stripeFrags, credit: 0 },
-                            { compte: '411', libelle: 'Clients', debit: 0, credit: strapeBrut },
-                        ],
-                    });
-                    ecriturePaiementId = res.ecritureId;
+                    if (virementRecu) {
+                        // Écriture de trésorerie BQ à la DATE EXACTE DU VIREMENT DE STRIPE VERS LE COMPTE BANCAIRE
+                        const res = await ecrireEcriture({
+                            journal: 'BQ',
+                            date: dateVirementStripe || datePaiement || date,
+                            libelle: `Virement Stripe vers compte bancaire — ${libelle} (payé par client le ${datePaiement})`,
+                            sourceType: 'facturation',
+                            mouvements: [
+                                { compte: '512', libelle: 'Banque', debit: stripeNet, credit: 0 },
+                                { compte: '6278', libelle: 'Frais Stripe', debit: stripeFrags, credit: 0 },
+                                { compte: '411', libelle: clientSelectionne?.nom || 'Clients', debit: 0, credit: strapeBrut },
+                            ],
+                        });
+                        ecriturePaiementId = res.ecritureId;
+                    }
                 } else {
                     const montantEncaisse = parseFloat(montantRecuManuel) || totalFacture;
                     const res = await ecrireEcriture({
@@ -186,7 +200,7 @@ export function FacturationClient() {
                         sourceType: 'facturation',
                         mouvements: [
                             { compte: '512', libelle: 'Banque', debit: montantEncaisse, credit: 0 },
-                            { compte: '411', libelle: 'Clients', debit: 0, credit: montantEncaisse },
+                            { compte: '411', libelle: clientSelectionne?.nom || 'Clients', debit: 0, credit: montantEncaisse },
                         ],
                     });
                     ecriturePaiementId = res.ecritureId;
@@ -203,9 +217,16 @@ export function FacturationClient() {
                 dateFacturation: date,
                 datePaiement: withPayment && datePaiement ? new Date(datePaiement) : null,
                 datePaiementStr: withPayment ? datePaiement : null,
+                virementRecu: withPayment && modePaiement === 'stripe' ? virementRecu : true,
+                dateVirementStripe: (withPayment && modePaiement === 'stripe' && virementRecu && dateVirementStripe)
+                    ? new Date(dateVirementStripe)
+                    : null,
+                dateVirementStripeStr: (withPayment && modePaiement === 'stripe' && virementRecu)
+                    ? dateVirementStripe
+                    : null,
                 withPayment: !!withPayment,
                 modePaiement: withPayment ? modePaiement : null,
-                statut: withPayment ? 'encaissee' : 'en_attente',
+                statut: withPayment ? (modePaiement === 'stripe' && !virementRecu ? 'payee_stripe' : 'encaissee') : 'en_attente',
                 lignes: lignesValides.map((l) => ({
                     description: l.description.trim(),
                     dateDebut: l.dateDebut || date,
@@ -263,6 +284,7 @@ export function FacturationClient() {
                 mrr,
                 withPayment,
                 datePaiement: withPayment ? datePaiement : null,
+                dateVirementStripe: withPayment && modePaiement === 'stripe' && virementRecu ? dateVirementStripe : null,
                 nbDocuments: documentIds.length,
             });
         } catch (err) {
@@ -277,7 +299,8 @@ export function FacturationClient() {
             <div className="notice notice--success">
                 Facturation de <strong>{formatMontant(done.totalFacture)}</strong> enregistrée pour <strong>{done.clientNom}</strong>.
                 {done.mrr > 0 && ` MRR généré : ${formatMontant(done.mrr)} / mois.`}
-                {done.withPayment && ` Encaissement comptabilisé au ${done.datePaiement}.`}
+                {done.withPayment && ` Client a payé le ${done.datePaiement}.`}
+                {done.dateVirementStripe && ` Virement vers le compte bancaire effectué le ${done.dateVirementStripe}.`}
                 {done.nbDocuments > 0 && ` (${done.nbDocuments} justificatif(s) rattaché(s)).`}
             </div>
             <button
@@ -290,6 +313,7 @@ export function FacturationClient() {
                     setClientQ('');
                     setDocumentIds([]);
                     setWithPayment(false);
+                    setVirementRecu(true);
                 }}
             >
                 Nouvelle facturation
@@ -303,7 +327,7 @@ export function FacturationClient() {
                 <div>
                     <h1 style={{ margin: 0 }}>Facturation client</h1>
                     <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>
-                        Facture multi-lignes avec récurrences mixtes, date de démarrage par abonnement et justificatifs.
+                        Facture multi-lignes, démarrage des abonnements, encaissements Stripe et justificatifs.
                     </p>
                 </div>
             </div>
@@ -454,7 +478,7 @@ export function FacturationClient() {
                 </div>
             )}
 
-            {/* Encaissement & Date de Paiement du Client */}
+            {/* Encaissement, Date de Paiement du Client & Virement Stripe vers compte bancaire */}
             <div className="card">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: withPayment ? 16 : 0 }}>
                     <input
@@ -471,75 +495,140 @@ export function FacturationClient() {
 
                 {withPayment && (
                     <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                        <div className="form-row" style={{ marginBottom: 14 }}>
-                            <div className="form-group">
-                                <label className="form-label">Date à laquelle le client a payé *</label>
-                                <input
-                                    type="date"
-                                    className="form-input"
-                                    value={datePaiement}
-                                    onChange={(e) => setDatePaiement(e.target.value)}
-                                    required={withPayment}
-                                />
-                                <span className="form-hint">L'écriture de banque sera enregistrée à cette date exacte.</span>
-                            </div>
-                            <div className="form-group">
-                                <label className="form-label">Mode de règlement</label>
-                                <select
-                                    className="form-select"
-                                    value={modePaiement}
-                                    onChange={(e) => setModePaiement(e.target.value)}
-                                >
-                                    {MODES_PAIEMENT.map((m) => (
-                                        <option key={m.value} value={m.value}>{m.label}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-
                         {modePaiement === 'stripe' ? (
-                            <div className="form-row form-row--3">
-                                <div className="form-group">
-                                    <label className="form-label">Montant brut Stripe (€)</label>
-                                    <input
-                                        type="number" min="0.01" step="0.01" className="form-input"
-                                        value={stripe.brut}
-                                        onChange={(e) => setStripe((s) => ({ ...s, brut: e.target.value }))}
-                                        placeholder="Ex. 100.00"
-                                    />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                                <div className="form-row">
+                                    <div className="form-group" style={{ marginBottom: 0 }}>
+                                        <label className="form-label">Date du paiement par le client sur Stripe *</label>
+                                        <input
+                                            type="date"
+                                            className="form-input"
+                                            value={datePaiement}
+                                            onChange={(e) => setDatePaiement(e.target.value)}
+                                            required
+                                        />
+                                        <span className="form-hint">Date à laquelle le client a validé son paiement sur Stripe.</span>
+                                    </div>
+                                    <div className="form-group" style={{ marginBottom: 0 }}>
+                                        <label className="form-label">Mode de règlement</label>
+                                        <select
+                                            className="form-select"
+                                            value={modePaiement}
+                                            onChange={(e) => setModePaiement(e.target.value)}
+                                        >
+                                            {MODES_PAIEMENT.map((m) => (
+                                                <option key={m.value} value={m.value}>{m.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
                                 </div>
-                                <div className="form-group">
-                                    <label className="form-label">Frais Stripe déduits (€)</label>
-                                    <input
-                                        type="number" min="0" step="0.01" className="form-input"
-                                        value={stripe.frais}
-                                        onChange={(e) => setStripe((s) => ({ ...s, frais: e.target.value }))}
-                                        placeholder="Ex. 2.25"
-                                    />
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">Net reçu en banque (€)</label>
-                                    <input
-                                        type="number" min="0.01" step="0.01" className="form-input"
-                                        value={stripe.net}
-                                        onChange={(e) => setStripe((s) => ({ ...s, net: e.target.value }))}
-                                        placeholder="Auto-calculé"
-                                    />
+
+                                {/* Section : Virement de Stripe vers mon compte */}
+                                <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '14px 16px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: virementRecu ? 12 : 6 }}>
+                                        <input
+                                            type="checkbox"
+                                            id="virement-recu"
+                                            checked={virementRecu}
+                                            onChange={(e) => setVirementRecu(e.target.checked)}
+                                            style={{ width: 16, height: 16, cursor: 'pointer' }}
+                                        />
+                                        <label htmlFor="virement-recu" style={{ fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                                            L'argent a déjà été viré de Stripe vers mon compte bancaire
+                                        </label>
+                                    </div>
+
+                                    {virementRecu ? (
+                                        <div>
+                                            <div className="form-group" style={{ maxWidth: 320, marginBottom: 14 }}>
+                                                <label className="form-label">Date du virement Stripe vers mon compte bancaire *</label>
+                                                <input
+                                                    type="date"
+                                                    className="form-input"
+                                                    value={dateVirementStripe}
+                                                    onChange={(e) => setDateVirementStripe(e.target.value)}
+                                                    required
+                                                />
+                                                <span className="form-hint">Date d'apparition sur votre relevé bancaire (compte 512).</span>
+                                            </div>
+
+                                            <div className="form-row form-row--3">
+                                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                                    <label className="form-label">Montant brut Stripe (€)</label>
+                                                    <input
+                                                        type="number" min="0.01" step="0.01" className="form-input"
+                                                        value={stripe.brut}
+                                                        onChange={(e) => setStripe((s) => ({ ...s, brut: e.target.value }))}
+                                                        placeholder="Ex. 100.00"
+                                                    />
+                                                </div>
+                                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                                    <label className="form-label">Frais Stripe déduits (€)</label>
+                                                    <input
+                                                        type="number" min="0" step="0.01" className="form-input"
+                                                        value={stripe.frais}
+                                                        onChange={(e) => setStripe((s) => ({ ...s, frais: e.target.value }))}
+                                                        placeholder="Ex. 2.25"
+                                                    />
+                                                </div>
+                                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                                    <label className="form-label">Net viré sur mon compte bancaire (€)</label>
+                                                    <input
+                                                        type="number" min="0.01" step="0.01" className="form-input"
+                                                        value={stripe.net}
+                                                        onChange={(e) => setStripe((s) => ({ ...s, net: e.target.value }))}
+                                                        placeholder="Auto-calculé"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                            L'argent reste sur votre solde d'attente Stripe. L'écriture en banque (compte 512) sera générée lors du virement vers votre compte.
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ) : (
-                            <div className="form-group" style={{ maxWidth: 300 }}>
-                                <label className="form-label">Montant net encaissé (€)</label>
-                                <input
-                                    type="number"
-                                    min="0.01"
-                                    step="0.01"
-                                    className="form-input"
-                                    placeholder={totalFacture ? totalFacture.toFixed(2) : '0.00'}
-                                    value={montantRecuManuel}
-                                    onChange={(e) => setMontantRecuManuel(e.target.value)}
-                                />
-                                <span className="form-hint">Par défaut le montant total de la facture ({formatMontant(totalFacture)}).</span>
+                            <div>
+                                <div className="form-row" style={{ marginBottom: 14 }}>
+                                    <div className="form-group">
+                                        <label className="form-label">Date du règlement reçu *</label>
+                                        <input
+                                            type="date"
+                                            className="form-input"
+                                            value={datePaiement}
+                                            onChange={(e) => setDatePaiement(e.target.value)}
+                                            required={withPayment}
+                                        />
+                                        <span className="form-hint">Date d'arrivée des fonds sur votre compte bancaire.</span>
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Mode de règlement</label>
+                                        <select
+                                            className="form-select"
+                                            value={modePaiement}
+                                            onChange={(e) => setModePaiement(e.target.value)}
+                                        >
+                                            {MODES_PAIEMENT.map((m) => (
+                                                <option key={m.value} value={m.value}>{m.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="form-group" style={{ maxWidth: 300 }}>
+                                    <label className="form-label">Montant net encaissé (€)</label>
+                                    <input
+                                        type="number"
+                                        min="0.01"
+                                        step="0.01"
+                                        className="form-input"
+                                        placeholder={totalFacture ? totalFacture.toFixed(2) : '0.00'}
+                                        value={montantRecuManuel}
+                                        onChange={(e) => setMontantRecuManuel(e.target.value)}
+                                    />
+                                    <span className="form-hint">Par défaut le total de la facture ({formatMontant(totalFacture)}).</span>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -593,46 +682,48 @@ export function FacturationClient() {
 
                                 {withPayment && (
                                     <>
-                                        {modePaiement === 'stripe' && strapeBrut > 0 ? (
+                                        {modePaiement === 'stripe' ? (
+                                            virementRecu && strapeBrut > 0 ? (
+                                                <>
+                                                    <tr style={{ borderTop: '2px dashed var(--border)' }}>
+                                                        <td rowSpan={3} style={{ fontSize: 12 }}>{dateVirementStripe || datePaiement}</td>
+                                                        <td rowSpan={3} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
+                                                        <td><code>512</code></td>
+                                                        <td>Banque (Virement Stripe vers compte)</td>
+                                                        <td style={{ textAlign: 'right' }}>{formatMontant(stripeNet)}</td>
+                                                        <td style={{ textAlign: 'right' }}>—</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td><code>6278</code></td>
+                                                        <td>Frais Stripe</td>
+                                                        <td style={{ textAlign: 'right' }}>{formatMontant(stripeFrags)}</td>
+                                                        <td style={{ textAlign: 'right' }}>—</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td><code>411</code></td>
+                                                        <td>Clients</td>
+                                                        <td style={{ textAlign: 'right' }}>—</td>
+                                                        <td style={{ textAlign: 'right' }}>{formatMontant(strapeBrut)}</td>
+                                                    </tr>
+                                                </>
+                                            ) : null
+                                        ) : (
                                             <>
                                                 <tr style={{ borderTop: '2px dashed var(--border)' }}>
-                                                    <td rowSpan={3} style={{ fontSize: 12 }}>{datePaiement || date}</td>
-                                                    <td rowSpan={3} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
+                                                    <td rowSpan={2} style={{ fontSize: 12 }}>{datePaiement || date}</td>
+                                                    <td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
                                                     <td><code>512</code></td>
                                                     <td>Banque</td>
-                                                    <td style={{ textAlign: 'right' }}>{formatMontant(stripeNet)}</td>
-                                                    <td style={{ textAlign: 'right' }}>—</td>
-                                                </tr>
-                                                <tr>
-                                                    <td><code>6278</code></td>
-                                                    <td>Frais Stripe</td>
-                                                    <td style={{ textAlign: 'right' }}>{formatMontant(stripeFrags)}</td>
+                                                    <td style={{ textAlign: 'right' }}>{formatMontant(parseFloat(montantRecuManuel) || totalFacture)}</td>
                                                     <td style={{ textAlign: 'right' }}>—</td>
                                                 </tr>
                                                 <tr>
                                                     <td><code>411</code></td>
                                                     <td>Clients</td>
                                                     <td style={{ textAlign: 'right' }}>—</td>
-                                                    <td style={{ textAlign: 'right' }}>{formatMontant(strapeBrut)}</td>
+                                                    <td style={{ textAlign: 'right' }}>{formatMontant(parseFloat(montantRecuManuel) || totalFacture)}</td>
                                                 </tr>
                                             </>
-                                        ) : (
-                                            <tr style={{ borderTop: '2px dashed var(--border)' }}>
-                                                <td rowSpan={2} style={{ fontSize: 12 }}>{datePaiement || date}</td>
-                                                <td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
-                                                <td><code>512</code></td>
-                                                <td>Banque</td>
-                                                <td style={{ textAlign: 'right' }}>{formatMontant(parseFloat(montantRecuManuel) || totalFacture)}</td>
-                                                <td style={{ textAlign: 'right' }}>—</td>
-                                            </tr>
-                                        )}
-                                        {modePaiement !== 'stripe' && (
-                                            <tr>
-                                                <td><code>411</code></td>
-                                                <td>Clients</td>
-                                                <td style={{ textAlign: 'right' }}>—</td>
-                                                <td style={{ textAlign: 'right' }}>{formatMontant(parseFloat(montantRecuManuel) || totalFacture)}</td>
-                                            </tr>
                                         )}
                                     </>
                                 )}
