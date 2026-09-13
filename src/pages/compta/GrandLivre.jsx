@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getEcrituresActives, calculerGrandLivre, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate } from '../../services/helpers';
+import { ModalModifierOperation } from '../../components/ModalModifierOperation';
 
 export default function GrandLivre() {
     const anneeCourante = new Date().getFullYear();
@@ -23,6 +24,7 @@ export default function GrandLivre() {
     const [recherche, setRecherche] = useState('');
     const [ecritures, setEcritures] = useState([]);
     const [loading, setLoading] = useState(() => !hasEcrituresCache());
+    const [selectedEcritureId, setSelectedEcritureId] = useState(null);
 
     const loadData = useCallback(async () => {
         if (!hasEcrituresCache()) {
@@ -106,6 +108,11 @@ export default function GrandLivre() {
                         🖨️ Imprimer / PDF
                     </button>
                 </div>
+            </div>
+
+            {/* Notice interactive */}
+            <div className="notice notice--info" style={{ marginBottom: 16 }}>
+                💡 <strong>Édition & Justificatifs :</strong> Cliquez sur n'importe quelle ligne d'écriture ou sur le bouton <strong>✏️ Modifier</strong> pour ouvrir le formulaire complet (Dépense, Facture, CCA, Capital initial), corriger ses montants ou dates, et ajouter vos pièces justificatives.
             </div>
 
             {/* Filtres */}
@@ -231,15 +238,27 @@ export default function GrandLivre() {
                                             <th style={{ textAlign: 'right', width: 110 }}>Débit</th>
                                             <th style={{ textAlign: 'right', width: 110 }}>Crédit</th>
                                             <th style={{ textAlign: 'right', width: 120 }}>Solde progressif</th>
+                                            <th style={{ textAlign: 'center', width: 90 }}>Action</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {compte.lignes.map((l, idx) => (
-                                            <tr key={idx}>
+                                            <tr
+                                                key={idx}
+                                                onClick={() => setSelectedEcritureId(l.ecritureId)}
+                                                style={{ cursor: 'pointer', transition: 'background var(--transition)' }}
+                                                className="table-row--interactive"
+                                                title="Cliquer pour voir le détail de l'écriture et ses pièces justificatives"
+                                            >
                                                 <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{formatDate(l.date)}</td>
                                                 <td><span className="badge badge--muted">{l.journal}</span></td>
                                                 <td style={{ fontSize: 12 }}><code>{l.pieceRef}</code></td>
-                                                <td>{l.libelle}</td>
+                                                <td>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                        <span>{l.libelle}</span>
+                                                        <span style={{ fontSize: 11, color: 'var(--accent)', opacity: 0.75, marginLeft: 8 }}>🔍 Détail</span>
+                                                    </div>
+                                                </td>
                                                 <td style={{ textAlign: 'right', fontWeight: 500 }}>
                                                     {l.debit > 0 ? formatMontant(l.debit) : '—'}
                                                 </td>
@@ -254,6 +273,20 @@ export default function GrandLivre() {
                                                 }}>
                                                     {formatMontant(Math.abs(l.soldeProgressif))} {l.soldeProgressif >= 0 ? 'D' : 'C'}
                                                 </td>
+                                                <td style={{ textAlign: 'center' }}>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn--sm btn--ghost"
+                                                        style={{ fontSize: 11, padding: '2px 8px' }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setSelectedEcritureId(l.ecritureId);
+                                                        }}
+                                                        title="Modifier cette opération"
+                                                    >
+                                                        ✏️ Modifier
+                                                    </button>
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -265,6 +298,7 @@ export default function GrandLivre() {
                                             <td style={{ textAlign: 'right', color: soldeDeb > 0 ? 'var(--accent)' : 'var(--success)' }}>
                                                 {soldeDeb > 0 ? formatMontant(soldeDeb) : formatMontant(soldeCred)}
                                             </td>
+                                            <td></td>
                                         </tr>
                                     </tfoot>
                                 </table>
@@ -275,13 +309,25 @@ export default function GrandLivre() {
             )}
 
             {/* Récapitulatif général en bas de page */}
-            <div className="card" style={{ background: 'var(--bg2)', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className="card" style={{ background: 'var(--bg2)', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <strong>TOTAL GÉNÉRAL DU GRAND LIVRE SÉLECTIONNÉ</strong>
                 <div style={{ display: 'flex', gap: 20, fontSize: 14 }}>
                     <span>Total Débits : <strong>{formatMontant(totalDebitGlobal)}</strong></span>
                     <span>Total Crédits : <strong>{formatMontant(totalCreditGlobal)}</strong></span>
                 </div>
             </div>
+
+            {/* Modal de modification de l'opération */}
+            {selectedEcritureId && (
+                <ModalModifierOperation
+                    ecritureId={selectedEcritureId}
+                    onClose={() => setSelectedEcritureId(null)}
+                    onSaved={() => {
+                        setSelectedEcritureId(null);
+                        loadData();
+                    }}
+                />
+            )}
         </div>
     );
 }

@@ -521,6 +521,15 @@ tbody tr:hover {
   background: var(--bg2);
 }
 
+.table-row--interactive {
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.table-row--interactive:hover {
+  background: #f0f7ff !important;
+}
+
 tbody td {
   padding: 10px 12px;
 }

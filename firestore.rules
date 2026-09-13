@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Toutes les collections : acces reserve aux utilisateurs authentifies
+    match /{collection}/{docId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

@@ -7,19 +7,25 @@ import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
 import { formatMontant, formatDate } from '../services/helpers';
 import { DetailComptable } from '../components/DetailComptable';
+import { ModalModifierOperation } from '../components/ModalModifierOperation';
 import { getCached, setCached } from '../services/dataCache';
 
 export default function ListeFactures() {
     const [factures, setFactures] = useState(() => getCached('factures') || []);
     const [loading, setLoading] = useState(() => !getCached('factures'));
+    const [selectedFacture, setSelectedFacture] = useState(null);
 
-    useEffect(() => {
+    const loadFactures = () => {
         getDocs(query(collection(db, 'factures'), orderBy('createdAt', 'desc'))).then((snap) => {
             const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
             setFactures(list);
             setCached('factures', list);
             setLoading(false);
         });
+    };
+
+    useEffect(() => {
+        loadFactures();
     }, []);
 
     async function marquerPayee(facture) {
@@ -85,12 +91,35 @@ export default function ListeFactures() {
                         </div>
                     </div>
 
-                    <DetailComptable
-                        ecritureIds={[...(f.ecritureVenteIds ?? []), ...(f.ecritureEncaissIds ?? [])]}
-                        sourceType="facture"
-                    />
+                    <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <DetailComptable
+                            ecritureIds={[...(f.ecritureVenteIds ?? []), ...(f.ecritureEncaissIds ?? [])]}
+                            sourceType="facture"
+                        />
+                        <button
+                            type="button"
+                            className="btn btn--sm btn--ghost"
+                            style={{ fontSize: 12 }}
+                            onClick={() => setSelectedFacture(f)}
+                        >
+                            ✏️ Modifier la facture
+                        </button>
+                    </div>
                 </div>
             ))}
+
+            {selectedFacture && (
+                <ModalModifierOperation
+                    sourceId={selectedFacture.id}
+                    sourceType="facture"
+                    ecritureId={selectedFacture.ecritureVenteIds?.[0]}
+                    onClose={() => setSelectedFacture(null)}
+                    onSaved={() => {
+                        setSelectedFacture(null);
+                        loadFactures();
+                    }}
+                />
+            )}
         </div>
     );
 }

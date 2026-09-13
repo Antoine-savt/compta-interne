@@ -20,6 +20,7 @@ import { formatMontant, formatDate } from '../services/helpers';
 import { FileUpload } from '../components/FileUpload';
 import { Tooltip } from '../components/Shared';
 import { getCached, setCached } from '../services/dataCache';
+import { ModalModifierOperation } from '../components/ModalModifierOperation';
 
 // Taux légal maximum d'intérêts déductibles pour les CCA (seuil d'alerte configuré à 4.00%)
 const TAUX_LEGAL_DEFECT_2026 = 4.00;
@@ -30,6 +31,7 @@ export default function ComptesCourants() {
     const [avances, setAvances] = useState(() => getCached('avancesFrags') || []);
     const [documents, setDocuments] = useState(() => getCached('documents') || []);
     const [loading, setLoading] = useState(() => !getCached('associes'));
+    const [selectedEditOperation, setSelectedEditOperation] = useState(null);
 
     // Onglet actif
     const [activeTab, setActiveTab] = useState('synthese'); // 'synthese' | 'mouvements' | 'interets'
@@ -259,39 +261,48 @@ export default function ComptesCourants() {
             const nomAssocie = `${ass.nom} ${ass.prenom || ''}`.trim();
             const dateStr = formDate;
 
+            // Tentative d'écriture comptable — en cas d'échec, on continue quand même
+            // pour que le mouvement CCA soit bien enregistré (l'écritureId restera null)
             let ecritureId = null;
-
-            if (formType === 'apport') {
-                // APPORT : La société encaisse des fonds de l'associé
-                // Débit 512 (Banque) / Crédit 455x (Compte courant associé)
-                const res = await ecrireEcriture({
-                    journal: 'BQ',
-                    date: dateStr,
-                    libelle: `Apport CCA — ${nomAssocie} — ${formDescription}`,
-                    sourceType: 'cca_apport',
-                    mouvements: [
-                        { compte: '512', libelle: `Banque — Apport ${nomAssocie}`, debit: montantNum, credit: 0 },
-                        { compte: compteCC, libelle: `Compte courant ${nomAssocie}`, debit: 0, credit: montantNum },
-                    ],
-                });
-                ecritureId = res.ecritureId;
-            } else {
-                // REMBOURSEMENT : La société rembourse l'associé
-                // Débit 455x (Compte courant) / Crédit 512 (Banque)
-                const res = await ecrireEcriture({
-                    journal: 'BQ',
-                    date: dateStr,
-                    libelle: `Remboursement CCA — ${nomAssocie} — ${formDescription}`,
-                    sourceType: 'cca_remboursement',
-                    mouvements: [
-                        { compte: compteCC, libelle: `Compte courant ${nomAssocie}`, debit: montantNum, credit: 0 },
-                        { compte: '512', libelle: `Banque — Remboursement ${nomAssocie}`, debit: 0, credit: montantNum },
-                    ],
-                });
-                ecritureId = res.ecritureId;
+            let ecritureWarning = null;
+            try {
+                if (formType === 'apport') {
+                    // APPORT : La société encaisse des fonds de l'associé
+                    // Débit 512 (Banque) / Crédit 455x (Compte courant associé)
+                    const res = await ecrireEcriture({
+                        journal: 'BQ',
+                        date: dateStr,
+                        libelle: `Apport CCA — ${nomAssocie} — ${formDescription}`,
+                        sourceType: 'cca_apport',
+                        mouvements: [
+                            { compte: '512', libelle: `Banque — Apport ${nomAssocie}`, debit: montantNum, credit: 0 },
+                            { compte: compteCC, libelle: `Compte courant ${nomAssocie}`, debit: 0, credit: montantNum },
+                        ],
+                    });
+                    ecritureId = res.ecritureId;
+                } else {
+                    // REMBOURSEMENT : La société rembourse l'associé
+                    // Débit 455x (Compte courant) / Crédit 512 (Banque)
+                    const res = await ecrireEcriture({
+                        journal: 'BQ',
+                        date: dateStr,
+                        libelle: `Remboursement CCA — ${nomAssocie} — ${formDescription}`,
+                        sourceType: 'cca_remboursement',
+                        mouvements: [
+                            { compte: compteCC, libelle: `Compte courant ${nomAssocie}`, debit: montantNum, credit: 0 },
+                            { compte: '512', libelle: `Banque — Remboursement ${nomAssocie}`, debit: 0, credit: montantNum },
+                        ],
+                    });
+                    ecritureId = res.ecritureId;
+                }
+            } catch (ecritureErr) {
+                // L'écriture comptable a échoué (ex: timeout, erreur réseau ou serveur),
+                // mais le mouvement CCA doit quand même être enregistré.
+                console.warn('[CCA] Écriture comptable non liée :', ecritureErr.message);
+                ecritureWarning = `Mouvement enregistré, mais l'écriture comptable n'a pas pu être liée : ${ecritureErr.message}`;
             }
 
-            // Enregistrer le mouvement dans Firestore
+            // Enregistrer le mouvement dans Firestore (toujours, même sans ecritureId)
             const mvtDocRef = await addDoc(collection(db, 'ccaMouvements'), {
                 associeId: formAssocieId,
                 associeNom: nomAssocie,
@@ -324,7 +335,11 @@ export default function ComptesCourants() {
                 return next;
             });
 
-            setFormSuccess(`Opération de ${formType === 'apport' ? 'l\'apport' : 'remboursement'} enregistrée avec succès.`);
+            if (ecritureWarning) {
+                setFormError(ecritureWarning);
+            } else {
+                setFormSuccess(`Opération de ${formType === 'apport' ? 'l\'apport' : 'remboursement'} enregistrée avec succès.`);
+            }
             setFormMontant('');
             setFormDescription('');
             setFormDocIds([]);
@@ -896,6 +911,7 @@ export default function ComptesCourants() {
                                         <th style={{ textAlign: 'right' }}>Débit (Sortie)</th>
                                         <th style={{ textAlign: 'right' }}>Crédit (Entrée)</th>
                                         <th>Écriture</th>
+                                        <th style={{ textAlign: 'center', width: 90 }}>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -956,6 +972,21 @@ export default function ComptesCourants() {
                                                         ) : (
                                                             <span style={{ color: 'var(--text-light)', fontSize: 11 }}>—</span>
                                                         )}
+                                                    </td>
+                                                    <td style={{ textAlign: 'center' }}>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn--sm btn--ghost"
+                                                            style={{ fontSize: 11, padding: '2px 8px' }}
+                                                            onClick={() => setSelectedEditOperation({
+                                                                sourceId: m.id,
+                                                                sourceType: m.type === 'apport' ? 'cca_apport' : 'cca_remboursement',
+                                                                ecritureId: m.ecritureId || null,
+                                                            })}
+                                                            title="Modifier ce mouvement CCA"
+                                                        >
+                                                            ✏️ Modifier
+                                                        </button>
                                                     </td>
                                                 </tr>
                                             );
@@ -1150,6 +1181,20 @@ export default function ComptesCourants() {
                         )}
                     </div>
                 </div>
+            )}
+
+            {/* Modal de modification de mouvement CCA */}
+            {selectedEditOperation && (
+                <ModalModifierOperation
+                    sourceId={selectedEditOperation.sourceId}
+                    sourceType={selectedEditOperation.sourceType}
+                    ecritureId={selectedEditOperation.ecritureId}
+                    onClose={() => setSelectedEditOperation(null)}
+                    onSaved={() => {
+                        setSelectedEditOperation(null);
+                        loadData(true);
+                    }}
+                />
             )}
         </div>
     );

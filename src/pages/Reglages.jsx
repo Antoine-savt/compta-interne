@@ -12,6 +12,7 @@ import { doc, getDoc, updateDoc, serverTimestamp, getDocs, collection, query, or
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
 import { invalidateSettingsCache, formatMontant, formatDate } from '../services/helpers';
+import { invalidateEcrituresCache } from '../services/comptaService';
 import { Tooltip } from '../components/Shared';
 
 const TOOLTIP_FRANCHISE = `En franchise en base de TVA (article 293 B du CGI), vous n'êtes pas redevable de la TVA. Vous ne la facturez pas à vos clients et ne la récupérez pas sur vos achats. C'est le statut le plus simple pour les petites structures.`;
@@ -88,18 +89,35 @@ export default function Reglages() {
         setCapitalSuccess('');
 
         try {
-            // Création de l'écriture équilibrée (Débit 512 / Crédit 101)
-            const { ecritureId } = await ecrireEcriture({
-                journal: 'BQ',
-                date: dateCreation,
-                libelle: `Dépôt du capital social initial — ${banqueDepot.trim() || 'Banque'}`,
-                sourceType: 'capital_initial',
-                pieceRef: 'STATUTS',
-                mouvements: [
-                    { compte: '512', libelle: `Banque — Dépôt capital initial (${banqueDepot})`, debit: montantNum, credit: 0 },
-                    { compte: '101', libelle: `Capital social souscrit et libéré`, debit: 0, credit: montantNum },
-                ],
-            });
+            let ecritureId = ecritureCapitalInitialId;
+
+            if (ecritureId) {
+                // Mise à jour de l'écriture existante pour préserver la cohérence des dates sans créer de doublon
+                await updateDoc(doc(db, 'ecritures', ecritureId), {
+                    date: new Date(dateCreation),
+                    libelle: `Dépôt du capital social initial — ${banqueDepot.trim() || 'Banque'}`,
+                    pieceRef: 'STATUTS',
+                    mouvements: [
+                        { compte: '512', libelle: `Banque — Dépôt capital initial (${banqueDepot})`, debit: montantNum, credit: 0 },
+                        { compte: '101', libelle: `Capital social souscrit et libéré`, debit: 0, credit: montantNum },
+                    ],
+                    updatedAt: serverTimestamp(),
+                });
+            } else {
+                // Création de l'écriture équilibrée (Débit 512 / Crédit 101)
+                const res = await ecrireEcriture({
+                    journal: 'BQ',
+                    date: dateCreation,
+                    libelle: `Dépôt du capital social initial — ${banqueDepot.trim() || 'Banque'}`,
+                    sourceType: 'capital_initial',
+                    pieceRef: 'STATUTS',
+                    mouvements: [
+                        { compte: '512', libelle: `Banque — Dépôt capital initial (${banqueDepot})`, debit: montantNum, credit: 0 },
+                        { compte: '101', libelle: `Capital social souscrit et libéré`, debit: 0, credit: montantNum },
+                    ],
+                });
+                ecritureId = res.ecritureId;
+            }
 
             // Sauvegarde dans settings/config
             await updateDoc(doc(db, 'settings', 'config'), {
@@ -110,8 +128,9 @@ export default function Reglages() {
                 updatedAt: serverTimestamp(),
             });
 
+            invalidateEcrituresCache();
             setEcritureCapitalInitialId(ecritureId);
-            setCapitalSuccess(`Capital initial de ${formatMontant(montantNum)} enregistré et comptabilisé avec succès (Écriture n° ${ecritureId.slice(0, 8)}). La trésorerie (512) et le Bilan (101) sont maintenant exacts.`);
+            setCapitalSuccess(`Capital initial de ${formatMontant(montantNum)} enregistré et mis à jour à la date du ${formatDate(dateCreation)} (Écriture n° ${ecritureId.slice(0, 8)}). Le Grand Livre est recalculé avec cette date exacte.`);
         } catch (err) {
             setCapitalError(err.message || 'Erreur lors de la comptabilisation du capital.');
         } finally {
@@ -161,7 +180,10 @@ export default function Reglages() {
                         </div>
 
                         <div className="form-group">
-                            <label className="form-label">Date de dépôt / création</label>
+                            <label className="form-label">
+                                Date de dépôt / création
+                                <Tooltip text="Date réelle figurant sur l'attestation de dépôt des fonds (Shine, Qonto...) ou des statuts. Cette date est répercutée dans le Grand Livre." />
+                            </label>
                             <input
                                 type="date"
                                 className="form-input"
@@ -169,6 +191,9 @@ export default function Reglages() {
                                 onChange={(e) => setDateCreation(e.target.value)}
                                 required
                             />
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                                💡 Date réelle de l'attestation bancaire
+                            </span>
                         </div>
 
                         <div className="form-group">

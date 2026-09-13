@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Formulaire "Enregistrer une dépense"
  * 
  * Génère automatiquement les écritures comptables via la fonction garde-fou.
@@ -38,6 +38,7 @@ export function NouvelleDepense({ onCreated }) {
     const [tauxTVA, setTauxTVA] = useState(20);
     const [clientProjetId, setClientProjetId] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [activite, setActivite] = useState('wheeloh'); // 'wheeloh' | 'site-chateau' | 'commun'
     const [dejaPayee, setDejaPayee] = useState(false);
     const [datePaiement, setDatePaiement] = useState('');
     const [recurrence, setRecurrence] = useState({ type: 'ponctuel', intervalleNombre: 1, intervalleUnite: 'mois', montantFixe: false, occurrencesPassees: 0 });
@@ -90,13 +91,15 @@ export function NouvelleDepense({ onCreated }) {
 
             // Récupérer le nom du client/projet analytique
             const clientProjet = clients.find((c) => c.id === clientProjetId);
+            const actLabel = activite === 'site-chateau' ? 'site-chateau.fr' : activite === 'commun' ? 'Commun' : 'Wheeloh';
+            const libelleDepense = `[${actLabel}] ${categorie.label} — ${description || fNom}`;
 
             // Écriture dépense (journal AC)
             const mvtsDepense = buildMouvementsDepense(montantHT, montantTVA, montantNum, tvaOn, categorie.compte, fNom);
             const { ecritureId: ecDep } = await ecrireEcriture({
                 journal: 'AC',
                 date,
-                libelle: `${categorie.label}  ${description || fNom}`,
+                libelle: libelleDepense,
                 sourceType: 'depense',
                 mouvements: mvtsDepense,
             });
@@ -111,7 +114,7 @@ export function NouvelleDepense({ onCreated }) {
                 const { ecritureId: ecPay } = await ecrireEcriture({
                     journal: 'BQ',
                     date: datePaiement || date,
-                    libelle: `Paiement ${categorie.label}  ${fNom}`,
+                    libelle: `Paiement [${actLabel}] ${categorie.label} — ${fNom}`,
                     sourceType: 'depense',
                     mouvements: mvtPay,
                 });
@@ -128,6 +131,8 @@ export function NouvelleDepense({ onCreated }) {
                 fournisseurNom: fNom,
                 description,
                 montant: montantNum,
+                activite: activite || 'wheeloh',
+                activiteLabel: actLabel,
                 categorieId,
                 categorieLabel: categorie.label,
                 categorieCompte: categorie.compte,
@@ -169,11 +174,12 @@ export function NouvelleDepense({ onCreated }) {
     function reset() {
         setDone(false); setError(''); setDescription(''); setMontant(''); setCategorieId('');
         setMotif(''); setFournNom(''); setFournId(''); setDocumentIds([]); setDejaPayee(false);
+        setActivite('wheeloh');
     }
 
     if (done) return (
         <div className="notice notice--success">
-             Dépense enregistrée avec succès !
+            ✓ Dépense enregistrée avec succès !
             <button className="btn btn--sm btn--ghost" style={{ marginLeft: 12 }} onClick={reset}>
                 Nouvelle dépense
             </button>
@@ -184,14 +190,47 @@ export function NouvelleDepense({ onCreated }) {
         <form onSubmit={handleSubmit}>
             <div className="page-header">
                 <h1>Enregistrer une dépense</h1>
-                <p>Choisissez une catégorie  les écritures comptables sont générées automatiquement.</p>
+                <p>Ventilez par activité et catégorie — les écritures comptables sont générées automatiquement.</p>
             </div>
 
             {error && <div className="notice notice--warning">{error}</div>}
 
-            {/*  Catégorie  */}
+            {/* ─── Activité concernée ─── */}
+            <div className="card" style={{ borderLeft: '4px solid var(--accent)' }}>
+                <div className="card__title">
+                    🏢 Activité concernée
+                    <Tooltip text="Choisissez quelle activité supporte cette dépense pour analyser vos coûts réels dans vos métriques, tout en conservant une comptabilité globale consolidée." />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                    {[
+                        { id: 'wheeloh', label: '🚲 Wheeloh', desc: 'Activité vélos / mobilité' },
+                        { id: 'site-chateau', label: '🏰 site-chateau.fr', desc: 'Projet site du château' },
+                        { id: 'commun', label: '🏢 Frais généraux / Commun', desc: 'Frais partagés (banque, compta...)' },
+                    ].map((item) => (
+                        <button
+                            key={item.id}
+                            type="button"
+                            className={`btn ${activite === item.id ? 'btn--primary' : 'btn--ghost'}`}
+                            style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'flex-start',
+                                padding: '12px 14px',
+                                textAlign: 'left',
+                                height: 'auto',
+                            }}
+                            onClick={() => setActivite(item.id)}
+                        >
+                            <span style={{ fontWeight: 700, fontSize: 14 }}>{item.label}</span>
+                            <span style={{ fontSize: 11, opacity: 0.8, marginTop: 4 }}>{item.desc}</span>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Catégorie */}
             <div className="card">
-                <div className="card__title"> Catégorie</div>
+                <div className="card__title">Catégorie</div>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     {categories.map((cat) => (
                         <button
@@ -332,10 +371,15 @@ export function NouvelleDepense({ onCreated }) {
                 )}
             </div>
 
-            {/*  Justificatifs  */}
+            {/* Justificatifs */}
             <div className="card">
-                <div className="card__title"> Justificatifs</div>
+                <div className="card__title">📎 Justificatifs</div>
                 <FileUpload sourceType="depense" sourceId={null} onUploaded={({ documentId }) => setDocumentIds((p) => [...p, documentId])} />
+                {documentIds.length > 0 && (
+                    <div className="form-hint" style={{ color: 'var(--success)', marginTop: 8, fontWeight: 600 }}>
+                        ✓ {documentIds.length} pièce(s) justificative(s) prête(s) à être rattachée(s).
+                    </div>
+                )}
             </div>
 
             <button type="submit" className="btn btn--primary" disabled={saving} style={{ minWidth: 180 }}>

@@ -16,6 +16,7 @@ import { db } from '../firebase';
 import { getEcrituresActives, calculerGrandLivre, calculerCompteResultat } from '../services/comptaService';
 import { formatMontant, formatDate } from '../services/helpers';
 import { getCached, setCached } from '../services/dataCache';
+import { ModalModifierOperation } from '../components/ModalModifierOperation';
 
 export default function Overview() {
     const navigate = useNavigate();
@@ -24,7 +25,9 @@ export default function Overview() {
     const [ccaMouvements, setCcaMouvements] = useState(() => getCached('ccaMouvements') || []);
     const [avances, setAvances] = useState(() => getCached('avancesFrags') || []);
     const [clients, setClients] = useState(() => getCached('clients') || []);
+    const [depenses, setDepenses] = useState(() => getCached('depenses') || []);
     const [loading, setLoading] = useState(() => !getCached('overview_ecritures'));
+    const [selectedEcritureId, setSelectedEcritureId] = useState(null);
 
     const anneeCourante = new Date().getFullYear();
 
@@ -33,30 +36,34 @@ export default function Overview() {
             setLoading(true);
         }
         try {
-            const [ecrData, assSnap, ccaSnap, avSnap, cliSnap] = await Promise.all([
+            const [ecrData, assSnap, ccaSnap, avSnap, cliSnap, depSnap] = await Promise.all([
                 getEcrituresActives({ dateDebut: `${anneeCourante}-01-01` }),
                 getDocs(collection(db, 'associes')),
                 getDocs(collection(db, 'ccaMouvements')),
                 getDocs(collection(db, 'avancesFrags')),
                 getDocs(collection(db, 'clients')),
+                getDocs(collection(db, 'depenses')),
             ]);
 
             const assList = assSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
             const ccaList = ccaSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
             const avList = avSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
             const cliList = cliSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const depList = depSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
             setEcritures(ecrData);
             setAssocies(assList);
             setCcaMouvements(ccaList);
             setAvances(avList);
             setClients(cliList);
+            setDepenses(depList);
 
             setCached('overview_ecritures', ecrData);
             setCached('associes', assList);
             setCached('ccaMouvements', ccaList);
             setCached('avancesFrags', avList);
             setCached('clients', cliList);
+            setCached('depenses', depList);
         } catch (err) {
             console.error('Erreur chargement Overview:', err);
         } finally {
@@ -100,6 +107,35 @@ export default function Overview() {
         const c455 = grandLivre.filter((c) => c.compte.startsWith('455'));
         return +c455.reduce((s, c) => s + c.soldeCrediteur, 0).toFixed(2);
     }, [grandLivre]);
+
+    // 7. Ventilation analytique des dépenses par activité (Wheeloh vs site-chateau.fr vs Commun)
+    const ventilationActivites = useMemo(() => {
+        let totalWheeloh = 0;
+        let totalSiteChateau = 0;
+        let totalCommun = 0;
+
+        depenses.forEach((d) => {
+            const m = d.montant || 0;
+            if (d.activite === 'site-chateau') totalSiteChateau += m;
+            else if (d.activite === 'commun') totalCommun += m;
+            else totalWheeloh += m;
+        });
+
+        const totalGlobal = totalWheeloh + totalSiteChateau + totalCommun;
+        const pctWheeloh = totalGlobal > 0 ? Math.round((totalWheeloh / totalGlobal) * 100) : 0;
+        const pctSiteChateau = totalGlobal > 0 ? Math.round((totalSiteChateau / totalGlobal) * 100) : 0;
+        const pctCommun = totalGlobal > 0 ? Math.max(0, 100 - pctWheeloh - pctSiteChateau) : 0;
+
+        return {
+            wheeloh: +totalWheeloh.toFixed(2),
+            siteChateau: +totalSiteChateau.toFixed(2),
+            commun: +totalCommun.toFixed(2),
+            totalGlobal: +totalGlobal.toFixed(2),
+            pctWheeloh,
+            pctSiteChateau,
+            pctCommun,
+        };
+    }, [depenses]);
 
     // ─── Dernières transactions chronologiques ───
     const dernieresTransactions = useMemo(() => {
@@ -307,6 +343,95 @@ export default function Overview() {
                 </div>
             </div>
 
+            {/* ─── Ventilation analytique des dépenses : Wheeloh vs site-chateau.fr ─── */}
+            <div className="card" style={{ padding: '18px 22px', marginBottom: 24, borderLeft: '4px solid #2563eb' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                    <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span>📊</span> Répartition analytique des charges par activité
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                            Ventilation interne de gestion · Votre comptabilité générale officielle (Bilan, Compte de résultat, Grand Livre) reste 100% consolidée.
+                        </div>
+                    </div>
+                    <button
+                        className="btn btn--sm btn--ghost"
+                        onClick={() => navigate('/depenses')}
+                    >
+                        Gérer les dépenses →
+                    </button>
+                </div>
+
+                {ventilationActivites.totalGlobal > 0 ? (
+                    <>
+                        {/* Barre visuelle de proportion */}
+                        <div style={{
+                            display: 'flex',
+                            height: 10,
+                            borderRadius: 5,
+                            overflow: 'hidden',
+                            backgroundColor: 'var(--bg3)',
+                            marginBottom: 16,
+                        }}>
+                            {ventilationActivites.pctWheeloh > 0 && (
+                                <div style={{ width: `${ventilationActivites.pctWheeloh}%`, backgroundColor: '#2563eb' }} title={`Wheeloh : ${ventilationActivites.pctWheeloh}%`} />
+                            )}
+                            {ventilationActivites.pctSiteChateau > 0 && (
+                                <div style={{ width: `${ventilationActivites.pctSiteChateau}%`, backgroundColor: '#9333ea' }} title={`site-chateau.fr : ${ventilationActivites.pctSiteChateau}%`} />
+                            )}
+                            {ventilationActivites.pctCommun > 0 && (
+                                <div style={{ width: `${ventilationActivites.pctCommun}%`, backgroundColor: '#94a3b8' }} title={`Commun : ${ventilationActivites.pctCommun}%`} />
+                            )}
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                            <div style={{ background: 'var(--bg2)', padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#1d4ed8' }}>🚲 Wheeloh</span>
+                                    <span style={{ fontSize: 12, fontWeight: 700, color: '#1d4ed8' }}>{ventilationActivites.pctWheeloh}%</span>
+                                </div>
+                                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
+                                    {formatMontant(ventilationActivites.wheeloh)}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                                    Activité mobilité & vélos
+                                </div>
+                            </div>
+
+                            <div style={{ background: 'var(--bg2)', padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#7e22ce' }}>🏰 site-chateau.fr</span>
+                                    <span style={{ fontSize: 12, fontWeight: 700, color: '#7e22ce' }}>{ventilationActivites.pctSiteChateau}%</span>
+                                </div>
+                                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
+                                    {formatMontant(ventilationActivites.siteChateau)}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                                    Projet site château
+                                </div>
+                            </div>
+
+                            <div style={{ background: 'var(--bg2)', padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>🏢 Frais généraux</span>
+                                    <span style={{ fontSize: 12, fontWeight: 700, color: '#475569' }}>{ventilationActivites.pctCommun}%</span>
+                                </div>
+                                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
+                                    {formatMontant(ventilationActivites.commun)}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                                    Frais bancaires, administratifs, etc.
+                                </div>
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', padding: '6px 0' }}>
+                        Aucune dépense enregistrée. Enregistrez des dépenses pour visualiser la part de chaque activité en temps réel.
+                    </div>
+                )}
+            </div>
+
             {/* Deux colonnes : Dernières transactions (large) + Synthèse CCA / Raccourcis (étroit) */}
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20, alignItems: 'start' }}>
 
@@ -319,8 +444,13 @@ export default function Overview() {
                         justifyContent: 'space-between',
                         alignItems: 'center',
                     }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
-                            Dernières opérations comptables
+                        <div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+                                Dernières opérations comptables
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                                💡 Cliquez sur une opération pour afficher sa partie double et ses justificatifs
+                            </div>
                         </div>
                         <button
                             className="btn btn--sm btn--ghost"
@@ -338,6 +468,7 @@ export default function Overview() {
                                     <th>Libellé / Tiers</th>
                                     <th style={{ width: 130 }}>Type</th>
                                     <th style={{ textAlign: 'right', width: 120 }}>Montant</th>
+                                    <th style={{ textAlign: 'center', width: 85 }}>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -349,12 +480,21 @@ export default function Overview() {
                                     </tr>
                                 ) : (
                                     dernieresTransactions.map((tx) => (
-                                        <tr key={tx.id}>
+                                        <tr
+                                            key={tx.id}
+                                            onClick={() => setSelectedEcritureId(tx.id)}
+                                            style={{ cursor: 'pointer', transition: 'background var(--transition)' }}
+                                            className="table-row--interactive"
+                                            title="Cliquer pour voir le détail complet et les pièces justificatives"
+                                        >
                                             <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                                                 {formatDate(tx.date)}
                                             </td>
                                             <td>
-                                                <div style={{ fontWeight: 500, fontSize: 13 }}>{tx.libelle}</div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <div style={{ fontWeight: 500, fontSize: 13 }}>{tx.libelle}</div>
+                                                    <span style={{ fontSize: 11, color: 'var(--accent)', opacity: 0.75, marginLeft: 8 }}>🔍</span>
+                                                </div>
                                                 <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
                                                     Journal {tx.journal} · Réf: {tx.pieceRef}
                                                 </div>
@@ -364,6 +504,20 @@ export default function Overview() {
                                             </td>
                                             <td style={{ textAlign: 'right', fontWeight: 600, fontSize: 13, color: tx.isPositive ? 'var(--success)' : 'var(--text)' }}>
                                                 {tx.isPositive ? `+ ${formatMontant(tx.montant)}` : `- ${formatMontant(tx.montant)}`}
+                                            </td>
+                                            <td style={{ textAlign: 'center' }}>
+                                                <button
+                                                    type="button"
+                                                    className="btn btn--sm btn--ghost"
+                                                    style={{ fontSize: 11, padding: '2px 8px' }}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSelectedEcritureId(tx.id);
+                                                    }}
+                                                    title="Modifier cette opération"
+                                                >
+                                                    ✏️ Modifier
+                                                </button>
                                             </td>
                                         </tr>
                                     ))
@@ -464,6 +618,18 @@ export default function Overview() {
                 </div>
 
             </div>
+
+            {/* Modal de modification d'opération */}
+            {selectedEcritureId && (
+                <ModalModifierOperation
+                    ecritureId={selectedEcritureId}
+                    onClose={() => setSelectedEcritureId(null)}
+                    onSaved={() => {
+                        setSelectedEcritureId(null);
+                        loadData(true);
+                    }}
+                />
+            )}
         </div>
     );
 }

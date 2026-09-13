@@ -28,6 +28,7 @@ import CompteResultat from './pages/compta/CompteResultat';
 import GrandLivre from './pages/compta/GrandLivre';
 import BalanceGenerale from './pages/compta/BalanceGenerale';
 import Journaux from './pages/compta/Journaux';
+import Documents from './pages/Documents';
 
 let initialized = false;
 function InitData() {
@@ -102,6 +103,7 @@ const SECTIONS_CONFIG = [
         links: [
             { to: '/factures', label: 'Factures manuelles' },
             { to: '/depenses', label: 'Dépenses' },
+            { to: '/documents', label: '📁 Pièces justificatives' },
         ],
     },
     {
@@ -277,9 +279,10 @@ function AppLayout() {
                     <Route path="/associes/:associeId" element={<FicheAssocie />} />
                     <Route path="/dividendes/nouveau" element={<Page><NouveauDividende /></Page>} />
 
-                    {/* Historique */}
+                    {/* Historique & Documents */}
                     <Route path="/factures/nouvelle" element={<NouvelleFacture />} />
                     <Route path="/factures" element={<ListeFactures />} />
+                    <Route path="/documents" element={<Documents />} />
 
                     {/* Réglages */}
                     <Route path="/reglages" element={<Reglages />} />
