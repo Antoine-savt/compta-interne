@@ -621,7 +621,7 @@ export default function ComptesCourants() {
                 <div className="card" style={{ borderColor: 'var(--accent)', borderWidth: 2, marginBottom: 24 }}>
                     <div className="card__title" style={{ justifyContent: 'space-between' }}>
                         <span>Nouveau mouvement de compte courant (CCA)</span>
-                        <button className="btn btn--sm btn--ghost" onClick={() => setShowFormMvt(false)}>Fermer ✕</button>
+                        <button className="btn btn--sm btn--ghost" onClick={() => setShowFormMvt(false)}>Fermer</button>
                     </div>
 
                     {formError && <div className="notice notice--danger">{formError}</div>}
@@ -730,7 +730,7 @@ export default function ComptesCourants() {
                             />
                             {formDocIds.length > 0 && (
                                 <div className="form-hint" style={{ color: 'var(--success)' }}>
-                                    ✓ {formDocIds.length} justificatif(s) prêt(s) à être rattaché(s).
+                                    {formDocIds.length} justificatif(s) prêt(s) à être rattaché(s).
                                 </div>
                             )}
                         </div>
@@ -952,7 +952,7 @@ export default function ComptesCourants() {
                                                                         className="badge badge--muted"
                                                                         style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                                                                     >
-                                                                        📎 {d.nom}
+                                                                        {d.nom}
                                                                     </a>
                                                                 ))}
                                                             </div>

@@ -40,7 +40,7 @@ const DEFAULT_CATEGORIES = [
         label: 'Cadeaux clients',
         compte: '6234',
         motifObligatoire: false,
-        infoFiscale: "⚠️ La déductibilité des cadeaux clients est plafonnée fiscalement (69 € TTC par bénéficiaire et par an). Au-delà du plafond, la TVA n'est pas récupérable.",
+        infoFiscale: "La déductibilité des cadeaux clients est plafonnée fiscalement (69 € TTC par bénéficiaire et par an). Au-delà du plafond, la TVA n'est pas récupérable.",
         ordre: 5,
     },
 ];

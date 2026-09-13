@@ -152,14 +152,14 @@ export default function Documents() {
                 </div>
                 <div className="page-header__actions">
                     <button className="btn btn--ghost" onClick={loadDocuments}>
-                        🔄 Actualiser
+                        Actualiser
                     </button>
                 </div>
             </div>
 
             {/* Avertissement & Traçabilité légale */}
             <div className="notice notice--info" style={{ marginBottom: 20 }}>
-                💡 <strong>Conservation légale :</strong> Les pièces justificatives comptables doivent être conservées pendant 10 ans (article L123-22 du Code de commerce). Chaque document est sauvegardé de manière sécurisée et directement rattaché à son écriture comptable.
+                <strong>Conservation légale :</strong> Les pièces justificatives comptables doivent être conservées pendant 10 ans (article L123-22 du Code de commerce). Chaque document est sauvegardé de manière sécurisée et directement rattaché à son écriture comptable.
             </div>
 
             {/* Cartes KPI */}
@@ -312,9 +312,11 @@ export default function Documents() {
                                         />
                                     ) : (
                                         <div style={{ textAlign: 'center' }}>
-                                            <div style={{ fontSize: 44 }}>📄</div>
+                                            <div style={{ display: 'inline-block', padding: '8px 16px', background: '#fee2e2', color: '#b91c1c', fontWeight: 800, fontSize: 14, borderRadius: 6, letterSpacing: '1px' }}>
+                                                PDF
+                                            </div>
                                             <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginTop: 4 }}>
-                                                DOCUMENT PDF
+                                                DOCUMENT
                                             </div>
                                         </div>
                                     )}
@@ -391,7 +393,7 @@ export default function Documents() {
                                                 style={{ fontSize: 11, padding: '3px 8px', flex: 1 }}
                                                 onClick={() => setPreviewDoc(d)}
                                             >
-                                                👁️ Aperçu
+                                                Aperçu
                                             </button>
                                         )}
                                         {fileUrl && (
@@ -404,7 +406,7 @@ export default function Documents() {
                                                 style={{ fontSize: 11, padding: '3px 8px' }}
                                                 title="Télécharger le fichier"
                                             >
-                                                📥
+                                                Télécharger
                                             </a>
                                         )}
                                         {d.sourceId && (
@@ -414,7 +416,7 @@ export default function Documents() {
                                                 title="Modifier l'opération comptable liée"
                                                 onClick={() => setEditOperation({ sourceId: d.sourceId, sourceType: d.sourceType })}
                                             >
-                                                ✏️ Modifier l'opération
+                                                Modifier
                                             </button>
                                         )}
                                         <button
@@ -423,7 +425,7 @@ export default function Documents() {
                                             title="Supprimer la pièce justificative"
                                             onClick={() => handleDeleteDoc(d)}
                                         >
-                                            🗑️
+                                            Supprimer
                                         </button>
                                     </div>
                                 </div>
@@ -473,7 +475,7 @@ export default function Documents() {
                             }}
                         >
                             <span style={{ fontWeight: 700, fontSize: 14 }}>
-                                📎 {previewDoc.nom} ({formatSize(previewDoc.taille)})
+                                {previewDoc.nom} ({formatSize(previewDoc.taille)})
                             </span>
                             <div style={{ display: 'flex', gap: 10 }}>
                                 <a
@@ -483,10 +485,10 @@ export default function Documents() {
                                     rel="noreferrer"
                                     className="btn btn--sm btn--ghost"
                                 >
-                                    📥 Télécharger
+                                    Télécharger
                                 </a>
                                 <button className="btn btn--sm btn--ghost" onClick={() => setPreviewDoc(null)}>
-                                    ✕ Fermer
+                                    Fermer
                                 </button>
                             </div>
                         </div>

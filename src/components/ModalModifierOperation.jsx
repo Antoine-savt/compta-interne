@@ -107,8 +107,6 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
     const [facTauxTVA, setFacTauxTVA] = useState(20);
     const [facStatut, setFacStatut] = useState('encaissee');
     const [facDateEnc, setFacDateEnc] = useState('');
-    const [facDatePaiement, setFacDatePaiement] = useState('');
-    const [facDateVirementStripe, setFacDateVirementStripe] = useState('');
 
     // ─── État Formulaire ÉCRITURE GÉNÉRALE (OD / autre) ───
     const [genDate, setGenDate] = useState('');
@@ -262,11 +260,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     if (fSnap.exists()) fData = { id: fSnap.id, ...fSnap.data() };
                 } else if (ecData?.id) {
                     const qF1 = query(collection(db, 'facturations'), where('ecritureFactId', '==', ecData.id));
-                    let qS1 = await getDocs(qF1);
-                    if (qS1.empty) {
-                        const qF2 = query(collection(db, 'facturations'), where('ecriturePaiementId', '==', ecData.id));
-                        qS1 = await getDocs(qF2);
-                    }
+                    const qS1 = await getDocs(qF1);
                     if (!qS1.empty) {
                         fData = { id: qS1.docs[0].id, ...qS1.docs[0].data() };
                         setActualSourceId(fData.id);
@@ -283,10 +277,6 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     setFacTvaOn(!!fData.tvaActive);
                     setFacTauxTVA(fData.tauxTVA || 20);
                     setFacStatut(fData.statut || 'encaissee');
-                    const rawPay = fData.datePaiement?.toDate ? fData.datePaiement.toDate() : (fData.datePaiementStr ? new Date(fData.datePaiementStr) : null);
-                    setFacDatePaiement(rawPay && !isNaN(rawPay) ? rawPay.toISOString().split('T')[0] : '');
-                    const rawVir = fData.dateVirementStripe?.toDate ? fData.dateVirementStripe.toDate() : (fData.dateVirementStripeStr ? new Date(fData.dateVirementStripeStr) : null);
-                    setFacDateVirementStripe(rawVir && !isNaN(rawVir) ? rawVir.toISOString().split('T')[0] : '');
                     setDocumentIds(fData.documentIds || []);
                 }
             } else {
@@ -630,19 +620,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                 let ecId = activeEcriture?.id;
                 let targetFactId = actualSourceId;
 
-                const ecFactId = sourceData?.ecritureFactId || (activeEcriture?.journal !== 'BQ' ? ecId : null);
-                const ecPaiementId = sourceData?.ecriturePaiementId || (activeEcriture?.journal === 'BQ' ? ecId : null);
-
-                if (ecFactId) {
-                    await updateDoc(doc(db, 'ecritures', ecFactId), {
-                        date: new Date(facDate),
-                        libelle: libelleFact,
-                        mouvements: mvtsVente,
-                        sourceId: targetFactId || null,
-                        sourceType: 'facturation',
-                        updatedAt: serverTimestamp(),
-                    });
-                } else if (ecId && activeEcriture?.journal !== 'BQ') {
+                if (ecId) {
                     await updateDoc(doc(db, 'ecritures', ecId), {
                         date: new Date(facDate),
                         libelle: libelleFact,
@@ -651,17 +629,6 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                         sourceType: 'facturation',
                         updatedAt: serverTimestamp(),
                     });
-                }
-
-                // Synchronisation de la date d'encaissement / virement bancaire Stripe sur l'écriture BQ
-                if (ecPaiementId) {
-                    const paymentDate = facDateVirementStripe || facDatePaiement;
-                    if (paymentDate) {
-                        await updateDoc(doc(db, 'ecritures', ecPaiementId), {
-                            date: new Date(paymentDate),
-                            updatedAt: serverTimestamp(),
-                        });
-                    }
                 }
 
                 const factPayload = {
@@ -677,10 +644,6 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     tvaActive: facTvaOn,
                     tauxTVA: facTvaOn ? facTauxTVA : null,
                     statut: facStatut,
-                    datePaiement: facDatePaiement ? new Date(facDatePaiement) : null,
-                    datePaiementStr: facDatePaiement || null,
-                    dateVirementStripe: facDateVirementStripe ? new Date(facDateVirementStripe) : null,
-                    dateVirementStripeStr: facDateVirementStripe || null,
                     documentIds,
                     updatedAt: serverTimestamp(),
                 };
@@ -705,7 +668,6 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
                 invalidateCache('factures');
                 invalidateCache('facturations');
-                invalidateEcrituresCache();
                 setSuccessMsg('Facturation et écritures comptables mises à jour avec succès.');
             } else if (operationType === 'od' || !sourceData) {
                 // Écriture générale modifiée directement
@@ -870,8 +832,8 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     </button>
                 </div>
 
-                {/* ─── Corps défilable ─── */}
-                <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+                {/* Corps avec scroll */}
+                <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1 }}>
                     {loading ? (
                         <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
                             Chargement des informations de l'opération...
@@ -887,7 +849,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                     {/* Sélecteur d'Activité */}
                                     <div className="card" style={{ marginBottom: 16, background: 'var(--bg2)', padding: '12px 16px' }}>
                                         <label className="form-label" style={{ marginBottom: 8, fontWeight: 600 }}>
-                                            Activité analytique concernée :
+                                            Activité concernée :
                                         </label>
                                         <div style={{ display: 'flex', gap: 10 }}>
                                             <button
@@ -912,7 +874,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                                 style={{ flex: 1 }}
                                                 onClick={() => setDepActivite('commun')}
                                             >
-                                                Commun (Structure)
+                                                Frais généraux / Commun
                                             </button>
                                         </div>
                                     </div>
@@ -1179,83 +1141,6 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                 </div>
                             )}
 
-                            {/* ─── FORMULAIRE FACTURE / FACTURATION CLIENT ─── */}
-                            {operationType === 'facture' && (
-                                <div>
-                                    <div className="form-row--2">
-                                        <div className="form-group">
-                                            <label className="form-label">Client</label>
-                                            <input
-                                                type="text"
-                                                className="form-input"
-                                                value={facClientNom}
-                                                onChange={(e) => setFacClientNom(e.target.value)}
-                                                placeholder="Nom du client"
-                                            />
-                                        </div>
-
-                                        <div className="form-group">
-                                            <label className="form-label">Date de facturation *</label>
-                                            <input
-                                                type="date"
-                                                className="form-input"
-                                                value={facDate}
-                                                onChange={(e) => setFacDate(e.target.value)}
-                                                required
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div className="form-group">
-                                        <label className="form-label">Description / Prestation *</label>
-                                        <input
-                                            type="text"
-                                            className="form-input"
-                                            value={facDescription}
-                                            onChange={(e) => setFacDescription(e.target.value)}
-                                            placeholder="Ex. Création site internet, Maintenance..."
-                                            required
-                                        />
-                                    </div>
-
-                                    <div className="form-row--3">
-                                        <div className="form-group">
-                                            <label className="form-label">Montant HT (€) *</label>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                className="form-input"
-                                                value={facMontantHT}
-                                                onChange={(e) => setFacMontantHT(e.target.value)}
-                                                required
-                                            />
-                                        </div>
-
-                                        <div className="form-group">
-                                            <label className="form-label">Date du paiement client</label>
-                                            <input
-                                                type="date"
-                                                className="form-input"
-                                                value={facDatePaiement}
-                                                onChange={(e) => setFacDatePaiement(e.target.value)}
-                                            />
-                                            <span className="form-hint">Date de règlement par le client.</span>
-                                        </div>
-
-                                        <div className="form-group">
-                                            <label className="form-label">Date du virement Stripe vers mon compte</label>
-                                            <input
-                                                type="date"
-                                                className="form-input"
-                                                value={facDateVirementStripe}
-                                                onChange={(e) => setFacDateVirementStripe(e.target.value)}
-                                            />
-                                            <span className="form-hint">Date d'apparition sur le relevé bancaire (compte 512).</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
                             {/* ─── FORMULAIRE ÉCRITURE GÉNÉRALE (OD / autre) ─── */}
                             {(operationType === 'od' || operationType === 'autre') && (
                                 <div>
@@ -1388,8 +1273,8 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                                 }}
                                             >
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                                    <span className="badge badge--muted" style={{ fontSize: 10, padding: '2px 5px' }}>
-                                                        {d.type === 'pdf' ? 'PDF' : 'FICHIER'}
+                                                    <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 5px', borderRadius: 4, background: '#e0e7ff', color: '#3730a3' }}>
+                                                        {d.type === 'pdf' || d.nom?.endsWith('.pdf') ? 'PDF' : 'IMG'}
                                                     </span>
                                                     <span style={{ fontSize: 13, fontWeight: 600 }}>{d.nom}</span>
                                                 </div>

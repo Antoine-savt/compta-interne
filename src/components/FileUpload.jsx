@@ -240,7 +240,9 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
                             }}
                         >
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                                <span style={{ fontSize: 14 }}>{f.type === 'pdf' ? '📄' : '🖼️'}</span>
+                                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 5px', borderRadius: 4, background: '#e0e7ff', color: '#3730a3' }}>
+                                    {f.type === 'pdf' ? 'PDF' : 'IMG'}
+                                </span>
                                 <div style={{ minWidth: 0 }}>
                                     <span
                                         style={{
@@ -268,7 +270,7 @@ export function FileUpload({ sourceType = 'depense', sourceId = null, onUploaded
                                 ) : (
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                         <span style={{ color: 'var(--success)', fontSize: 11, fontWeight: 600 }}>
-                                            ✓ Enregistré
+                                            Enregistré
                                         </span>
                                         {f.url && (
                                             <a

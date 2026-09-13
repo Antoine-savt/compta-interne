@@ -59,13 +59,18 @@ export default function CompteResultat() {
                         {detailComptes ? 'Masquer détails des comptes' : 'Afficher détails des comptes'}
                     </button>
                     <button className="btn btn--ghost" onClick={handlePrint}>
-                        🖨️ Imprimer / PDF
+                        Imprimer / PDF
                     </button>
                 </div>
             </div>
 
+            {/* Bannière de période visible uniquement à l'impression */}
+            <div className="print-only" style={{ marginBottom: 16, fontSize: 13, color: '#374151', fontWeight: 600 }}>
+                Période d'exercice : du {dateDebut} au {dateFin}
+            </div>
+
             {/* Barre de filtres de période */}
-            <div className="card" style={{ padding: '14px 20px', marginBottom: 20 }}>
+            <div className="card no-print" style={{ padding: '14px 20px', marginBottom: 20 }}>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>Période :</span>
@@ -114,7 +119,7 @@ export default function CompteResultat() {
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
                         Chiffre d'affaires (Produits)
                     </div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--success)' }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--success)' }} className="print-neutral-val">
                         {formatMontant(produits.totalGlobal)}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Classe 7 (Ventes / Prestations)</div>
@@ -124,7 +129,7 @@ export default function CompteResultat() {
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
                         Total des charges
                     </div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--danger)' }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--danger)' }} className="print-neutral-val">
                         {formatMontant(charges.totalGlobal)}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Classe 6 (Exploitation, Frais, CCA)</div>
@@ -134,17 +139,17 @@ export default function CompteResultat() {
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
                         Résultat d'exploitation
                     </div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: sig.resultatExploitation >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: sig.resultatExploitation >= 0 ? 'var(--success)' : 'var(--danger)' }} className={`print-resultat-exploitation ${sig.resultatExploitation >= 0 ? 'is-positif' : 'is-negatif'}`}>
                         {formatMontant(sig.resultatExploitation)}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Produits expl. - Charges expl.</div>
                 </div>
 
-                <div className="card" style={{ padding: '14px 18px', marginBottom: 0, border: `2px solid ${sig.estBenefice ? 'var(--success)' : 'var(--danger)'}` }}>
+                <div className={`card print-resultat-net ${sig.estBenefice ? 'is-benefice' : 'is-perte'}`} style={{ padding: '14px 18px', marginBottom: 0, border: `2px solid ${sig.estBenefice ? 'var(--success)' : 'var(--danger)'}` }}>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
                         Résultat Net ({sig.estBenefice ? 'Bénéfice' : 'Perte'})
                     </div>
-                    <div style={{ fontSize: 22, fontWeight: 800, color: sig.estBenefice ? 'var(--success)' : 'var(--danger)' }}>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: sig.estBenefice ? 'var(--success)' : 'var(--danger)' }} className="print-resultat-net-val">
                         {formatMontant(sig.resultatNet)}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Produits totaux - Charges totales</div>
@@ -156,9 +161,9 @@ export default function CompteResultat() {
 
                 {/* ─── CHARGES (Classe 6) ─── */}
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                    <div style={{ padding: '16px 20px', background: '#fef2f2', borderBottom: '1px solid #fecaca', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h2 style={{ fontSize: 16, margin: 0, color: 'var(--danger)' }}>CHARGES (Classe 6)</h2>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--danger)' }}>
+                    <div style={{ padding: '16px 20px', background: '#fef2f2', borderBottom: '1px solid #fecaca', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} className="print-neutral-header">
+                        <h2 style={{ fontSize: 16, margin: 0, color: 'var(--danger)' }} className="print-neutral-val">CHARGES (Classe 6)</h2>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--danger)' }} className="print-neutral-val">
                             {formatMontant(charges.totalGlobal)}
                         </span>
                     </div>
@@ -235,17 +240,17 @@ export default function CompteResultat() {
 
                     </div>
 
-                    <div style={{ padding: '14px 20px', background: '#fef2f2', borderTop: '2px solid #fecaca', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}>
+                    <div style={{ padding: '14px 20px', background: '#fef2f2', borderTop: '2px solid #fecaca', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }} className="print-neutral-footer">
                         <span>TOTAL CHARGES</span>
-                        <span style={{ color: 'var(--danger)' }}>{formatMontant(charges.totalGlobal)}</span>
+                        <span style={{ color: 'var(--danger)' }} className="print-neutral-val">{formatMontant(charges.totalGlobal)}</span>
                     </div>
                 </div>
 
                 {/* ─── PRODUITS (Classe 7) ─── */}
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                    <div style={{ padding: '16px 20px', background: '#f0fdf4', borderBottom: '1px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h2 style={{ fontSize: 16, margin: 0, color: 'var(--success)' }}>PRODUITS (Classe 7)</h2>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--success)' }}>
+                    <div style={{ padding: '16px 20px', background: '#f0fdf4', borderBottom: '1px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} className="print-neutral-header">
+                        <h2 style={{ fontSize: 16, margin: 0, color: 'var(--success)' }} className="print-neutral-val">PRODUITS (Classe 7)</h2>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--success)' }} className="print-neutral-val">
                             {formatMontant(produits.totalGlobal)}
                         </span>
                     </div>
@@ -306,9 +311,9 @@ export default function CompteResultat() {
 
                     </div>
 
-                    <div style={{ padding: '14px 20px', background: '#f0fdf4', borderTop: '2px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}>
+                    <div style={{ padding: '14px 20px', background: '#f0fdf4', borderTop: '2px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }} className="print-neutral-footer">
                         <span>TOTAL PRODUITS</span>
-                        <span style={{ color: 'var(--success)' }}>{formatMontant(produits.totalGlobal)}</span>
+                        <span style={{ color: 'var(--success)' }} className="print-neutral-val">{formatMontant(produits.totalGlobal)}</span>
                     </div>
                 </div>
 

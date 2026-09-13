@@ -72,21 +72,21 @@ export default function ListeDepenses() {
         if (act === 'site-chateau') {
             return (
                 <span className="badge" style={{ background: '#f3e8ff', color: '#6b21a8', border: '1px solid #e9d5ff', fontWeight: 600 }}>
-                    🏰 site-chateau.fr
+                    site-chateau.fr
                 </span>
             );
         }
         if (act === 'commun') {
             return (
                 <span className="badge badge--muted" style={{ fontWeight: 600 }}>
-                    🏢 Commun
+                    Commun
                 </span>
             );
         }
         // Par défaut wheeloh
         return (
             <span className="badge badge--info" style={{ background: '#dbeafe', color: '#1e40af', fontWeight: 600 }}>
-                🚲 Wheeloh
+                Wheeloh
             </span>
         );
     };
@@ -142,19 +142,19 @@ export default function ListeDepenses() {
                 marginBottom: 20,
             }}>
                 <div className="card" style={{ padding: '12px 16px', borderLeft: '4px solid #2563eb' }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>🚲 Dépenses Wheeloh</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Dépenses Wheeloh</div>
                     <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginTop: 4 }}>
                         {formatMontant(totauxActivites.wheeloh)}
                     </div>
                 </div>
                 <div className="card" style={{ padding: '12px 16px', borderLeft: '4px solid #9333ea' }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>🏰 Dépenses site-chateau.fr</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Dépenses site-chateau.fr</div>
                     <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginTop: 4 }}>
                         {formatMontant(totauxActivites.siteChateau)}
                     </div>
                 </div>
                 <div className="card" style={{ padding: '12px 16px', borderLeft: '4px solid var(--text-muted)' }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>🏢 Frais généraux / Commun</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Frais généraux / Commun</div>
                     <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginTop: 4 }}>
                         {formatMontant(totauxActivites.commun)}
                     </div>
@@ -168,9 +168,9 @@ export default function ListeDepenses() {
                 </span>
                 {[
                     { id: 'tous', label: `Toutes (${depenses.length})` },
-                    { id: 'wheeloh', label: `🚲 Wheeloh` },
-                    { id: 'site-chateau', label: `🏰 site-chateau.fr` },
-                    { id: 'commun', label: `🏢 Frais communs` },
+                    { id: 'wheeloh', label: `Wheeloh` },
+                    { id: 'site-chateau', label: `site-chateau.fr` },
+                    { id: 'commun', label: `Frais communs` },
                 ].map((f) => (
                     <button
                         key={f.id}
@@ -218,7 +218,7 @@ export default function ListeDepenses() {
                                 {/* Pièces jointes directes */}
                                 {docsLiees.length > 0 && (
                                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                                        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>📎 Pièce(s) jointe(s) :</span>
+                                        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Pièce(s) jointe(s) :</span>
                                         {docsLiees.map((docItem) => (
                                             <a
                                                 key={docItem.id}
@@ -228,7 +228,7 @@ export default function ListeDepenses() {
                                                 className="btn btn--sm btn--ghost"
                                                 style={{ fontSize: 11, padding: '2px 8px' }}
                                             >
-                                                📄 {docItem.nom} ↗
+                                                {docItem.nom} ↗
                                             </a>
                                         ))}
                                     </div>

@@ -348,7 +348,7 @@ export default function Overview() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
                     <div>
                         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span>📊</span> Répartition analytique des charges par activité
+                            Répartition analytique des charges par activité
                         </div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                             Ventilation interne de gestion · Votre comptabilité générale officielle (Bilan, Compte de résultat, Grand Livre) reste 100% consolidée.
@@ -387,7 +387,7 @@ export default function Overview() {
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
                             <div style={{ background: 'var(--bg2)', padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#1d4ed8' }}>🚲 Wheeloh</span>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#1d4ed8' }}>Wheeloh</span>
                                     <span style={{ fontSize: 12, fontWeight: 700, color: '#1d4ed8' }}>{ventilationActivites.pctWheeloh}%</span>
                                 </div>
                                 <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
@@ -400,7 +400,7 @@ export default function Overview() {
 
                             <div style={{ background: 'var(--bg2)', padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#7e22ce' }}>🏰 site-chateau.fr</span>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#7e22ce' }}>site-chateau.fr</span>
                                     <span style={{ fontSize: 12, fontWeight: 700, color: '#7e22ce' }}>{ventilationActivites.pctSiteChateau}%</span>
                                 </div>
                                 <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
@@ -413,7 +413,7 @@ export default function Overview() {
 
                             <div style={{ background: 'var(--bg2)', padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>🏢 Frais généraux</span>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>Frais généraux</span>
                                     <span style={{ fontSize: 12, fontWeight: 700, color: '#475569' }}>{ventilationActivites.pctCommun}%</span>
                                 </div>
                                 <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
@@ -449,7 +449,7 @@ export default function Overview() {
                                 Dernières opérations comptables
                             </div>
                             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                                💡 Cliquez sur une opération pour afficher sa partie double et ses justificatifs
+                                Cliquez sur une opération pour afficher sa partie double et ses justificatifs
                             </div>
                         </div>
                         <button

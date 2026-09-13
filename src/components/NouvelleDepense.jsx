@@ -179,7 +179,7 @@ export function NouvelleDepense({ onCreated }) {
 
     if (done) return (
         <div className="notice notice--success">
-            ✓ Dépense enregistrée avec succès !
+            Dépense enregistrée avec succès.
             <button className="btn btn--sm btn--ghost" style={{ marginLeft: 12 }} onClick={reset}>
                 Nouvelle dépense
             </button>
@@ -196,33 +196,26 @@ export function NouvelleDepense({ onCreated }) {
             {error && <div className="notice notice--warning">{error}</div>}
 
             {/* ─── Activité concernée ─── */}
-            <div className="card" style={{ borderLeft: '4px solid var(--accent)' }}>
-                <div className="card__title">
-                    🏢 Activité concernée
-                    <Tooltip text="Choisissez quelle activité supporte cette dépense pour analyser vos coûts réels dans vos métriques, tout en conservant une comptabilité globale consolidée." />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <div className="card">
+                <div className="card__title">Activité concernée</div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     {[
-                        { id: 'wheeloh', label: '🚲 Wheeloh', desc: 'Activité vélos / mobilité' },
-                        { id: 'site-chateau', label: '🏰 site-chateau.fr', desc: 'Projet site du château' },
-                        { id: 'commun', label: '🏢 Frais généraux / Commun', desc: 'Frais partagés (banque, compta...)' },
+                        { id: 'wheeloh', label: 'Wheeloh' },
+                        { id: 'site-chateau', label: 'site-chateau.fr' },
+                        { id: 'commun', label: 'Frais généraux / Commun' },
                     ].map((item) => (
                         <button
                             key={item.id}
                             type="button"
                             className={`btn ${activite === item.id ? 'btn--primary' : 'btn--ghost'}`}
                             style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'flex-start',
-                                padding: '12px 14px',
-                                textAlign: 'left',
-                                height: 'auto',
+                                padding: '8px 16px',
+                                fontWeight: 600,
+                                fontSize: 13,
                             }}
                             onClick={() => setActivite(item.id)}
                         >
-                            <span style={{ fontWeight: 700, fontSize: 14 }}>{item.label}</span>
-                            <span style={{ fontSize: 11, opacity: 0.8, marginTop: 4 }}>{item.desc}</span>
+                            {item.label}
                         </button>
                     ))}
                 </div>
@@ -373,11 +366,11 @@ export function NouvelleDepense({ onCreated }) {
 
             {/* Justificatifs */}
             <div className="card">
-                <div className="card__title">📎 Justificatifs</div>
+                <div className="card__title">Justificatifs</div>
                 <FileUpload sourceType="depense" sourceId={null} onUploaded={({ documentId }) => setDocumentIds((p) => [...p, documentId])} />
                 {documentIds.length > 0 && (
                     <div className="form-hint" style={{ color: 'var(--success)', marginTop: 8, fontWeight: 600 }}>
-                        ✓ {documentIds.length} pièce(s) justificative(s) prête(s) à être rattachée(s).
+                        {documentIds.length} pièce(s) justificative(s) prête(s) à être rattachée(s).
                     </div>
                 )}
             </div>

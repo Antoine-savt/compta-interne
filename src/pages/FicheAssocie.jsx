@@ -274,7 +274,7 @@ export default function FicheAssocie() {
                                                                 className="badge badge--muted"
                                                                 style={{ textDecoration: 'none' }}
                                                             >
-                                                                📎 {docItem.nom}
+                                                                {docItem.nom}
                                                             </a>
                                                         ))}
                                                     </div>

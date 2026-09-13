@@ -103,7 +103,7 @@ const SECTIONS_CONFIG = [
         links: [
             { to: '/factures', label: 'Factures manuelles' },
             { to: '/depenses', label: 'Dépenses' },
-            { to: '/documents', label: '📁 Pièces justificatives' },
+            { to: '/documents', label: 'Pièces justificatives' },
         ],
     },
     {
@@ -117,16 +117,6 @@ const SECTIONS_CONFIG = [
 
 function Sidebar() {
     const location = useLocation();
-
-    // Sections épinglées (persistées dans localStorage)
-    const [pinned, setPinned] = useState(() => {
-        try {
-            const saved = localStorage.getItem('compta_sidebar_pinned');
-            return saved ? JSON.parse(saved) : ['compta'];
-        } catch {
-            return ['compta'];
-        }
-    });
 
     // Sections repliées (persistées dans localStorage)
     const [collapsed, setCollapsed] = useState(() => {
@@ -146,21 +136,6 @@ function Sidebar() {
         });
     }
 
-    function togglePin(id) {
-        setPinned((prev) => {
-            const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-            try { localStorage.setItem('compta_sidebar_pinned', JSON.stringify(next)); } catch { }
-            return next;
-        });
-    }
-
-    // Trier les sections : les épinglées en premier
-    const sortedSections = useMemo(() => {
-        const pinnedList = SECTIONS_CONFIG.filter((s) => pinned.includes(s.id));
-        const unpinnedList = SECTIONS_CONFIG.filter((s) => !pinned.includes(s.id));
-        return [...pinnedList, ...unpinnedList];
-    }, [pinned]);
-
     return (
         <aside className="sidebar">
             <div className="sidebar__logo">Compta<span>.</span></div>
@@ -168,23 +143,15 @@ function Sidebar() {
 
                 {/* Navigation vers la Vue d'ensemble */}
                 <NavLink to="/overview" end style={{ marginBottom: 12, fontWeight: 600 }}>
-                    📊 Vue d'ensemble
+                    Vue d'ensemble
                 </NavLink>
 
-                {sortedSections.map((sec, index) => {
-                    const isPinned = pinned.includes(sec.id);
+                {SECTIONS_CONFIG.map((sec) => {
                     const hasActiveChild = sec.links.some((l) => location.pathname === l.to || location.pathname.startsWith(l.to + '/'));
                     const isCollapsed = collapsed.includes(sec.id) && !hasActiveChild;
 
-                    // Afficher un séparateur / titre si on passe aux non-épinglés
-                    const showUnpinnedHeader = !isPinned && index > 0 && pinned.includes(sortedSections[index - 1]?.id);
-
                     return (
                         <div key={sec.id} className="sidebar__section-group">
-                            {showUnpinnedHeader && (
-                                <div className="sidebar__group-label">Autres sections</div>
-                            )}
-
                             <div
                                 className="sidebar__section-header"
                                 onClick={() => toggleCollapse(sec.id)}
@@ -203,19 +170,6 @@ function Sidebar() {
                                     </span>
                                     <span>{sec.title}</span>
                                 </div>
-
-                                <button
-                                    type="button"
-                                    className={`sidebar__pin-btn ${isPinned ? 'sidebar__pin-btn--active' : ''}`}
-                                    title={isPinned ? 'Désépingler cette section' : 'Épingler cette section en haut'}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        togglePin(sec.id);
-                                    }}
-                                >
-                                    <span>📌</span>
-                                    {isPinned ? <span className="sidebar__pin-label">Épinglé</span> : <span className="sidebar__pin-label" style={{ opacity: 0.6 }}>Pin</span>}
-                                </button>
                             </div>
 
                             {!isCollapsed && (

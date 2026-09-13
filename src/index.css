@@ -1018,13 +1018,33 @@ tfoot td {
   border: 1px solid #e5e7eb;
 }
 
+.print-only {
+  display: none;
+}
+
 /* ─── Impression / Export PDF ────────────────────────────────────────────── */
 @media print {
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+    font-size: 11px;
+  }
+
   .sidebar,
   .page-header__actions,
   button,
-  .notice {
+  .notice,
+  .no-print {
     display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
   }
 
   .main {
@@ -1034,11 +1054,57 @@ tfoot td {
   }
 
   .card {
-    border: none !important;
+    border: 1px solid #e5e7eb !important;
     box-shadow: none !important;
-    padding: 0 !important;
     page-break-inside: avoid;
     break-inside: avoid;
+    background: #ffffff !important;
+  }
+
+  /* Valeurs neutres / monochromes pour l'impression */
+  .print-neutral-val {
+    color: #111827 !important;
+  }
+
+  .print-neutral-header {
+    background: #f9fafb !important;
+    border-bottom: 1px solid #e5e7eb !important;
+    color: #111827 !important;
+  }
+
+  .print-neutral-footer {
+    background: #f9fafb !important;
+    border-top: 1px solid #e5e7eb !important;
+    color: #111827 !important;
+  }
+
+  /* SEULES les métriques clés restent en couleur */
+  .print-resultat-net.is-benefice {
+    border: 2px solid #16a34a !important;
+    background: #f0fdf4 !important;
+  }
+  .print-resultat-net.is-benefice .print-resultat-net-val {
+    color: #15803d !important;
+    font-weight: 800 !important;
+  }
+
+  .print-resultat-net.is-perte {
+    border: 2px solid #dc2626 !important;
+    background: #fef2f2 !important;
+  }
+  .print-resultat-net.is-perte .print-resultat-net-val {
+    color: #b91c1c !important;
+    font-weight: 800 !important;
+  }
+
+  .print-resultat-exploitation.is-positif {
+    color: #15803d !important;
+    font-weight: 700 !important;
+  }
+
+  .print-resultat-exploitation.is-negatif {
+    color: #b91c1c !important;
+    font-weight: 700 !important;
   }
 
   table {
@@ -1049,6 +1115,6 @@ tfoot td {
 
   th, td {
     padding: 5px 8px !important;
-    border-bottom: 1px solid #ddd !important;
+    border-bottom: 1px solid #e5e7eb !important;
   }
 }

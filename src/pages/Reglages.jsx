@@ -147,12 +147,12 @@ export default function Reglages() {
                 </div>
             </div>
 
-            {saved && <div className="notice notice--success">✓ Réglages généraux enregistrés.</div>}
+            {saved && <div className="notice notice--success">Réglages généraux enregistrés.</div>}
 
             {/* ─── 1. CAPITAL SOCIAL INITIAL & TRÉSORERIE DE DÉPART ─── */}
             <div className="card" style={{ borderColor: 'var(--border)', marginBottom: 24 }}>
                 <div className="card__title" style={{ color: 'var(--text)' }}>
-                    🏢 Trésorerie initiale & Capital social de création
+                    Trésorerie initiale & Capital social de création
                     <Tooltip text={TOOLTIP_CAPITAL} />
                 </div>
 
@@ -192,7 +192,7 @@ export default function Reglages() {
                                 required
                             />
                             <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                                💡 Date réelle de l'attestation bancaire
+                                Date réelle de l'attestation bancaire
                             </span>
                         </div>
 
@@ -210,7 +210,7 @@ export default function Reglages() {
 
                     {ecritureCapitalInitialId && (
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
-                            ✓ Écriture comptable active liée : <code>{ecritureCapitalInitialId}</code> (Débit 512 / Crédit 101)
+                            Écriture comptable active liée : <code>{ecritureCapitalInitialId}</code> (Débit 512 / Crédit 101)
                         </div>
                     )}
 
@@ -303,7 +303,7 @@ export default function Reglages() {
                                 <tr key={c.id}>
                                     <td>{c.label}</td>
                                     <td><code>{c.compte}</code></td>
-                                    <td>{c.motifObligatoire ? '✓ Oui' : 'Non'}</td>
+                                    <td>{c.motifObligatoire ? 'Oui' : 'Non'}</td>
                                 </tr>
                             ))}
                         </tbody>

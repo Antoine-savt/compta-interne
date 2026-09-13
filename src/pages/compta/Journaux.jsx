@@ -66,12 +66,17 @@ export default function Journaux() {
                 </div>
                 <div className="page-header__actions">
                     <button className="btn btn--primary" onClick={handleTelechargerFEC}>
-                        📁 Télécharger le FEC légal (.txt)
+                        Télécharger le FEC légal (.txt)
                     </button>
                     <button className="btn btn--ghost" onClick={() => window.print()}>
-                        🖨️ Imprimer
+                        Imprimer
                     </button>
                 </div>
+            </div>
+
+            {/* Bannière de période visible uniquement à l'impression */}
+            <div className="print-only" style={{ marginBottom: 16, fontSize: 13, color: '#374151', fontWeight: 600 }}>
+                Période d'exercice : du {dateDebut} au {dateFin}
             </div>
 
             {/* Avertissement FEC */}
@@ -82,7 +87,7 @@ export default function Journaux() {
             </div>
 
             {/* Filtres & Configuration SIREN */}
-            <div className="card" style={{ padding: '14px 20px', marginBottom: 20 }}>
+            <div className="card no-print" style={{ padding: '14px 20px', marginBottom: 20 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, alignItems: 'end' }}>
                     <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: 12 }}>Journal</label>

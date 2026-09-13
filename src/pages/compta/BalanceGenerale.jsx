@@ -90,16 +90,21 @@ export default function BalanceGenerale() {
                 </div>
                 <div className="page-header__actions">
                     <button className="btn btn--ghost" onClick={exporterCSV}>
-                        📥 Exporter en CSV
+                        Exporter en CSV
                     </button>
                     <button className="btn btn--ghost" onClick={() => window.print()}>
-                        🖨️ Imprimer / PDF
+                        Imprimer / PDF
                     </button>
                 </div>
             </div>
 
+            {/* Bannière de période visible uniquement à l'impression */}
+            <div className="print-only" style={{ marginBottom: 16, fontSize: 13, color: '#374151', fontWeight: 600 }}>
+                Période d'arrêté : du {dateDebut} au {dateFin}
+            </div>
+
             {/* Filtres de période et de classe */}
-            <div className="card" style={{ padding: '14px 20px', marginBottom: 20 }}>
+            <div className="card no-print" style={{ padding: '14px 20px', marginBottom: 20 }}>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>Période :</span>
@@ -158,7 +163,7 @@ export default function BalanceGenerale() {
                 <div className={`notice ${balance.totaux.equilibre ? 'notice--success' : 'notice--danger'}`} style={{ marginBottom: 20 }}>
                     {balance.totaux.equilibre ? (
                         <div>
-                            <strong>✓ Concordance arithmétique parfaite :</strong>
+                            <strong>Concordance arithmétique parfaite :</strong>
                             <br />
                             • Total Débits ({formatMontant(balance.totaux.totalDebit)}) = Total Crédits ({formatMontant(balance.totaux.totalCredit)})
                             <br />
@@ -166,7 +171,7 @@ export default function BalanceGenerale() {
                         </div>
                     ) : (
                         <div>
-                            <strong>⚠️ Déséquilibre dans les comptes :</strong>
+                            <strong>Déséquilibre dans les comptes :</strong>
                             Écart Débit/Crédit de {formatMontant(Math.abs(balance.totaux.ecartMouvements))}.
                         </div>
                     )}

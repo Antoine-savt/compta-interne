@@ -60,13 +60,18 @@ export default function Bilan() {
                         {detailComptes ? 'Masquer détails des comptes' : 'Afficher détails des comptes'}
                     </button>
                     <button className="btn btn--ghost" onClick={handlePrint}>
-                        🖨️ Imprimer / PDF
+                        Imprimer / PDF
                     </button>
                 </div>
             </div>
 
+            {/* Bannière de période visible uniquement à l'impression */}
+            <div className="print-only" style={{ marginBottom: 16, fontSize: 13, color: '#374151', fontWeight: 600 }}>
+                Période d'arrêté : du {dateDebut} au {dateFin}
+            </div>
+
             {/* Barre de filtres de période */}
-            <div className="card" style={{ padding: '14px 20px', marginBottom: 20 }}>
+            <div className="card no-print" style={{ padding: '14px 20px', marginBottom: 20 }}>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>Période d'arrêté :</span>
@@ -116,12 +121,12 @@ export default function Bilan() {
             <div className={`notice ${equilibre.estEquilibre ? 'notice--success' : 'notice--danger'}`} style={{ marginBottom: 20 }}>
                 {equilibre.estEquilibre ? (
                     <div>
-                        <strong>✓ Bilan équilibré :</strong> Total Actif ({formatMontant(actif.total)}) = Total Passif ({formatMontant(passif.total)}).
+                        <strong>Bilan équilibré :</strong> Total Actif ({formatMontant(actif.total)}) = Total Passif ({formatMontant(passif.total)}).
                         Le résultat de l'exercice ({formatMontant(passif.resultatNet)}) est intégré aux capitaux propres.
                     </div>
                 ) : (
                     <div>
-                        <strong>⚠️ Écart d'équilibre détecté :</strong> Écart de {formatMontant(Math.abs(equilibre.ecart))} (Actif: {formatMontant(actif.total)} / Passif: {formatMontant(passif.total)}).
+                        <strong>Écart d'équilibre détecté :</strong> Écart de {formatMontant(Math.abs(equilibre.ecart))} (Actif: {formatMontant(actif.total)} / Passif: {formatMontant(passif.total)}).
                         Vérifiez vos écritures manuelles ou lettrages.
                     </div>
                 )}
