@@ -3,7 +3,7 @@
  * Netlify Serverless Function pour l'envoi des emails de rappel de RDV
  */
 
-exports.handler = async function (event) {
+export async function handler(event) {
     if (event.httpMethod === 'OPTIONS') {
         return {
             statusCode: 200,
@@ -127,4 +127,4 @@ Cet email a été envoyé automatiquement par votre outil de gestion Compta / CR
             body: JSON.stringify({ error: err.message || 'Erreur interne lors de l\'envoi de l\'email' }),
         };
     }
-};
+}
