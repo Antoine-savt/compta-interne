@@ -18,8 +18,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant } from '../services/helpers';
+import { formatMontant, toISODate } from '../services/helpers';
 import { Tooltip } from './Shared';
+import { DateInput } from './common/DateInput';
 
 const COMPTES_DEBIT = [
     { value: '110', label: '110 — Report à nouveau' },
@@ -33,7 +34,7 @@ export function NouveauDividende({ onCreated }) {
     const [associeId, setAssocieId] = useState(searchParams.get('associeId') ?? '');
     const [montant, setMontant] = useState('');
     const [compteDebit, setCompteDebit] = useState('120');
-    const [dateDecision, setDateDecision] = useState(new Date().toISOString().split('T')[0]);
+    const [dateDecision, setDateDecision] = useState(toISODate(new Date()));
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [done, setDone] = useState(null);
@@ -144,7 +145,7 @@ export function NouveauDividende({ onCreated }) {
                 </div>
                 <div className="form-group">
                     <label className="form-label">Date de décision d'AG</label>
-                    <input type="date" className="form-input" style={{ maxWidth: 200 }} value={dateDecision} onChange={(e) => setDateDecision(e.target.value)} required />
+                    <DateInput className="form-input" style={{ maxWidth: 200 }} value={dateDecision} onChange={(e) => setDateDecision(e.target.value)} required />
                 </div>
             </div>
 

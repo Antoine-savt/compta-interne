@@ -34,6 +34,7 @@ import { invalidateEcrituresCache } from '../services/comptaService';
 import { invalidateCache } from '../services/dataCache';
 import { formatMontant, formatDate, calculerTTCdepuisHT } from '../services/helpers';
 import { FileUpload } from './FileUpload';
+import { DateInput } from './common/DateInput';
 
 const CATEGORIES_DEPENSES = [
     { id: 'saas', label: 'Logiciels & SaaS', compte: '6135' },
@@ -883,8 +884,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                     <div className="form-row--3">
                                         <div className="form-group">
                                             <label className="form-label">Date de la dépense *</label>
-                                            <input
-                                                type="date"
+                                            <DateInput
                                                 className="form-input"
                                                 value={depDate}
                                                 onChange={(e) => setDepDate(e.target.value)}
@@ -1001,8 +1001,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                             {depDejaPayee && (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                                     <span style={{ fontSize: 13 }}>Date paiement :</span>
-                                                    <input
-                                                        type="date"
+                                                    <DateInput
                                                         className="form-input"
                                                         style={{ width: 150, padding: '4px 8px' }}
                                                         value={depDatePaiement}
@@ -1064,8 +1063,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                     <div className="form-row--2">
                                         <div className="form-group">
                                             <label className="form-label">Date réelle de l'opération *</label>
-                                            <input
-                                                type="date"
+                                            <DateInput
                                                 className="form-input"
                                                 value={ccaDate}
                                                 onChange={(e) => setCcaDate(e.target.value)}
@@ -1118,8 +1116,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
                                         <div className="form-group">
                                             <label className="form-label">Date de libération / création *</label>
-                                            <input
-                                                type="date"
+                                            <DateInput
                                                 className="form-input"
                                                 value={capDate}
                                                 onChange={(e) => setCapDate(e.target.value)}
@@ -1147,8 +1144,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                     <div className="form-row--2">
                                         <div className="form-group">
                                             <label className="form-label">Date de l'écriture *</label>
-                                            <input
-                                                type="date"
+                                            <DateInput
                                                 className="form-input"
                                                 value={genDate}
                                                 onChange={(e) => setGenDate(e.target.value)}

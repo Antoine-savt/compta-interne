@@ -88,6 +88,56 @@ export function formatMontant(n) {
 
 export function formatDate(ts) {
     if (!ts) return '—';
-    const d = ts.toDate ? ts.toDate() : new Date(ts);
-    return new Intl.DateTimeFormat('fr-FR').format(d);
+    if (typeof ts === 'string') {
+        const trimmed = ts.trim();
+        // Déjà au format JJ/MM/AAAA
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+            return trimmed;
+        }
+        // Chaîne commençant par AAAA-MM-JJ (ex. YYYY-MM-DD ou ISO YYYY-MM-DDTHH:mm:ss...)
+        const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (match) {
+            const [, y, m, d] = match;
+            return `${d}/${m}/${y}`;
+        }
+    }
+    try {
+        const d = ts.toDate ? ts.toDate() : (ts instanceof Date ? ts : new Date(ts));
+        if (isNaN(d.getTime())) return typeof ts === 'string' ? ts : '—';
+        return new Intl.DateTimeFormat('fr-FR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+        }).format(d);
+    } catch {
+        return typeof ts === 'string' ? ts : '—';
+    }
 }
+
+/**
+ * Convertit un objet Date ou une chaîne en format YYYY-MM-DD en heure locale
+ * sans décalage de fuseau horaire (contrairement à toISOString qui convertit en UTC).
+ */
+export function toISODate(input) {
+    if (!input) return '';
+    if (typeof input === 'string') {
+        const m = input.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+        const frMatch = input.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (frMatch) {
+            const [, d, mo, y] = frMatch;
+            return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+    }
+    try {
+        const d = input.toDate ? input.toDate() : (input instanceof Date ? input : new Date(input));
+        if (isNaN(d.getTime())) return '';
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    } catch {
+        return '';
+    }
+}
+

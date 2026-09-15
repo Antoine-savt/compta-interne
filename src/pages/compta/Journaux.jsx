@@ -8,7 +8,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getEcrituresActives, genererFEC, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
-import { formatMontant, formatDate } from '../../services/helpers';
+import { formatMontant, formatDate, toISODate } from '../../services/helpers';
+import { DateInput } from '../../components/common/DateInput';
 
 const JOURNAUX = [
     { code: '', label: 'Tous les journaux' },
@@ -21,7 +22,7 @@ const JOURNAUX = [
 export default function Journaux() {
     const anneeCourante = new Date().getFullYear();
     const [dateDebut, setDateDebut] = useState(`${anneeCourante}-01-01`);
-    const [dateFin, setDateFin] = useState(new Date().toISOString().split('T')[0]);
+    const [dateFin, setDateFin] = useState(toISODate(new Date()));
     const [codeJournal, setCodeJournal] = useState('');
     const [ecritures, setEcritures] = useState([]);
     const [loading, setLoading] = useState(() => !hasEcrituresCache());
@@ -76,7 +77,7 @@ export default function Journaux() {
 
             {/* Bannière de période visible uniquement à l'impression */}
             <div className="print-only" style={{ marginBottom: 16, fontSize: 13, color: '#374151', fontWeight: 600 }}>
-                Période d'exercice : du {dateDebut} au {dateFin}
+                Période d'exercice : du {formatDate(dateDebut)} au {formatDate(dateFin)}
             </div>
 
             {/* Avertissement FEC */}
@@ -104,9 +105,9 @@ export default function Journaux() {
 
                     <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: 12 }}>Date début</label>
-                        <input
-                            type="date"
+                        <DateInput
                             className="form-input"
+                            style={{ width: 145 }}
                             value={dateDebut}
                             onChange={(e) => setDateDebut(e.target.value)}
                         />
@@ -114,9 +115,9 @@ export default function Journaux() {
 
                     <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: 12 }}>Date fin</label>
-                        <input
-                            type="date"
+                        <DateInput
                             className="form-input"
+                            style={{ width: 145 }}
                             value={dateFin}
                             onChange={(e) => setDateFin(e.target.value)}
                         />

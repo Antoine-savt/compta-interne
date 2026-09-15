@@ -16,11 +16,12 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant, formatDate } from '../services/helpers';
+import { formatMontant, formatDate, toISODate } from '../services/helpers';
 import { FileUpload } from '../components/FileUpload';
 import { Tooltip } from '../components/Shared';
 import { getCached, setCached } from '../services/dataCache';
 import { ModalModifierOperation } from '../components/ModalModifierOperation';
+import { DateInput } from '../components/common/DateInput';
 
 // Taux légal maximum d'intérêts déductibles pour les CCA (seuil d'alerte configuré à 4.00%)
 const TAUX_LEGAL_DEFECT_2026 = 4.00;
@@ -44,7 +45,7 @@ export default function ComptesCourants() {
     const [formAssocieId, setFormAssocieId] = useState('');
     const [formType, setFormType] = useState('apport'); // 'apport' | 'remboursement'
     const [formMontant, setFormMontant] = useState('');
-    const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
+    const [formDate, setFormDate] = useState(toISODate(new Date()));
     const [formDescription, setFormDescription] = useState('');
     const [formTaux, setFormTaux] = useState('');
     const [formDocIds, setFormDocIds] = useState([]);
@@ -55,7 +56,7 @@ export default function ComptesCourants() {
     // Calculateur d'intérêts
     const [calcAssocieId, setCalcAssocieId] = useState('');
     const [calcDateDebut, setCalcDateDebut] = useState(`${new Date().getFullYear()}-01-01`);
-    const [calcDateFin, setCalcDateFin] = useState(new Date().toISOString().split('T')[0]);
+    const [calcDateFin, setCalcDateFin] = useState(toISODate(new Date()));
     const [calcTaux, setCalcTaux] = useState(TAUX_LEGAL_DEFECT_2026);
     const [calcTauxLegalPlafond, setCalcTauxLegalPlafond] = useState(TAUX_LEGAL_DEFECT_2026);
     const [comptabilisationEnCours, setComptabilisationEnCours] = useState(false);
@@ -483,7 +484,7 @@ export default function ComptesCourants() {
         setCalcSuccess('');
         try {
             const dateEcriture = calcDateFin;
-            const libelle = `Intérêts CCA ${ass.nom} — ${calcDateDebut} au ${calcDateFin} (taux ${calcTaux}%)`;
+            const libelle = `Intérêts CCA ${ass.nom} — ${formatDate(calcDateDebut)} au ${formatDate(calcDateFin)} (taux ${calcTaux}%)`;
 
             // Écriture OD : Débit 6615 / Crédit 455x
             const { ecritureId } = await ecrireEcriture({
@@ -663,8 +664,7 @@ export default function ComptesCourants() {
 
                             <div className="form-group">
                                 <label className="form-label">Date de l'opération</label>
-                                <input
-                                    type="date"
+                                <DateInput
                                     className="form-input"
                                     value={formDate}
                                     onChange={(e) => setFormDate(e.target.value)}
@@ -1039,8 +1039,7 @@ export default function ComptesCourants() {
 
                             <div className="form-group">
                                 <label className="form-label">Période du</label>
-                                <input
-                                    type="date"
+                                <DateInput
                                     className="form-input"
                                     value={calcDateDebut}
                                     onChange={(e) => setCalcDateDebut(e.target.value)}
@@ -1049,8 +1048,7 @@ export default function ComptesCourants() {
 
                             <div className="form-group">
                                 <label className="form-label">Au</label>
-                                <input
-                                    type="date"
+                                <DateInput
                                     className="form-input"
                                     value={calcDateFin}
                                     onChange={(e) => setCalcDateFin(e.target.value)}

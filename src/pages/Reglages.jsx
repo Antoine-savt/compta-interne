@@ -14,6 +14,7 @@ import { ecrireEcriture } from '../services/api';
 import { invalidateSettingsCache, formatMontant, formatDate } from '../services/helpers';
 import { invalidateEcrituresCache } from '../services/comptaService';
 import { Tooltip } from '../components/Shared';
+import { DateInput } from '../components/common/DateInput';
 
 const TOOLTIP_FRANCHISE = `En franchise en base de TVA (article 293 B du CGI), vous n'êtes pas redevable de la TVA. Vous ne la facturez pas à vos clients et ne la récupérez pas sur vos achats. C'est le statut le plus simple pour les petites structures.`;
 const TOOLTIP_CAPITAL = `Le capital social déposé à la création de la société (statuts / attestation de dépôt des fonds) constitue la trésorerie initiale de départ. Comptablement, il s'enregistre par un Débit du compte 512 (Banque) et un Crédit du compte 101 (Capital social).`;
@@ -184,8 +185,7 @@ export default function Reglages() {
                                 Date de dépôt / création
                                 <Tooltip text="Date réelle figurant sur l'attestation de dépôt des fonds (Shine, Qonto...) ou des statuts. Cette date est répercutée dans le Grand Livre." />
                             </label>
-                            <input
-                                type="date"
+                            <DateInput
                                 className="form-input"
                                 value={dateCreation}
                                 onChange={(e) => setDateCreation(e.target.value)}

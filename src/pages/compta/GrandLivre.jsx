@@ -12,13 +12,14 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getEcrituresActives, calculerGrandLivre, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
-import { formatMontant, formatDate } from '../../services/helpers';
+import { formatMontant, formatDate, toISODate } from '../../services/helpers';
+import { DateInput } from '../../components/common/DateInput';
 import { ModalModifierOperation } from '../../components/ModalModifierOperation';
 
 export default function GrandLivre() {
     const anneeCourante = new Date().getFullYear();
     const [dateDebut, setDateDebut] = useState(`${anneeCourante}-01-01`);
-    const [dateFin, setDateFin] = useState(new Date().toISOString().split('T')[0]);
+    const [dateFin, setDateFin] = useState(toISODate(new Date()));
     const [journalFiltre, setJournalFiltre] = useState('');
     const [compteFiltre, setCompteFiltre] = useState('');
     const [recherche, setRecherche] = useState('');
@@ -73,7 +74,7 @@ export default function GrandLivre() {
 
         grandLivreFiltre.forEach((c) => {
             c.lignes.forEach((l) => {
-                const dateStr = l.date?.toISOString ? l.date.toISOString().split('T')[0] : '';
+                const dateStr = l.date ? formatDate(l.date) : '';
                 const row = [
                     `"${c.compte}"`,
                     `"${c.intitule.replace(/"/g, '""')}"`,
@@ -112,7 +113,7 @@ export default function GrandLivre() {
 
             {/* Bannière de période visible uniquement à l'impression */}
             <div className="print-only" style={{ marginBottom: 16, fontSize: 13, color: '#374151', fontWeight: 600 }}>
-                Période d'exercice : du {dateDebut} au {dateFin}
+                Période d'exercice : du {formatDate(dateDebut)} au {formatDate(dateFin)}
             </div>
 
             {/* Filtres */}
@@ -120,8 +121,7 @@ export default function GrandLivre() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, alignItems: 'end' }}>
                     <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: 12 }}>Période du</label>
-                        <input
-                            type="date"
+                        <DateInput
                             className="form-input"
                             value={dateDebut}
                             onChange={(e) => setDateDebut(e.target.value)}
@@ -130,8 +130,7 @@ export default function GrandLivre() {
 
                     <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: 12 }}>Au</label>
-                        <input
-                            type="date"
+                        <DateInput
                             className="form-input"
                             value={dateFin}
                             onChange={(e) => setDateFin(e.target.value)}

@@ -11,9 +11,10 @@ import {
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant, getSettings, prochaineEcheance, doitEtreFixe } from '../services/helpers';
+import { formatMontant, getSettings, prochaineEcheance, doitEtreFixe, toISODate } from '../services/helpers';
 import { Tooltip, ToggleSwitch, SelecteurFrequence } from './Shared';
 import { FileUpload } from './FileUpload';
+import { DateInput } from './common/DateInput';
 
 const TOOLTIP_TVA_DEP = `En franchise en base de TVA, vous ne récupérez pas la TVA sur vos achats. Laissez ce toggle désactivé. Si votre société passe au régime réel assujetti, vous pourrez déduire la TVA payée à vos fournisseurs.`;
 const TOOLTIP_ATTENTE = `"À payer" : la facture fournisseur est reçue mais n'a pas encore été réglée. "Payée" : le virement ou paiement a été effectué.`;
@@ -37,7 +38,7 @@ export function NouvelleDepense({ onCreated }) {
     const [tvaOn, setTvaOn] = useState(false);
     const [tauxTVA, setTauxTVA] = useState(20);
     const [clientProjetId, setClientProjetId] = useState('');
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [date, setDate] = useState(toISODate(new Date()));
     const [activite, setActivite] = useState('wheeloh'); // 'wheeloh' | 'site-chateau' | 'commun'
     const [dejaPayee, setDejaPayee] = useState(false);
     const [datePaiement, setDatePaiement] = useState('');
@@ -290,7 +291,7 @@ export function NouvelleDepense({ onCreated }) {
                     </div>
                     <div className="form-group">
                         <label className="form-label">Date de la dépense</label>
-                        <input type="date" className="form-input" value={date} onChange={(e) => setDate(e.target.value)} />
+                        <DateInput className="form-input" value={date} onChange={(e) => setDate(e.target.value)} />
                     </div>
                 </div>
 
@@ -367,7 +368,7 @@ export function NouvelleDepense({ onCreated }) {
                 {dejaPayee && (
                     <div className="form-group" style={{ marginTop: 10 }}>
                         <label className="form-label">Date de paiement</label>
-                        <input type="date" className="form-input" style={{ width: 200 }} value={datePaiement} onChange={(e) => setDatePaiement(e.target.value)} />
+                        <DateInput className="form-input" style={{ width: 200 }} value={datePaiement} onChange={(e) => setDatePaiement(e.target.value)} />
                     </div>
                 )}
             </div>

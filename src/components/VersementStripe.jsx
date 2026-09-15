@@ -1,4 +1,4 @@
-﻿/**
+/**
  * VersementStripe.jsx
  * 
  * Formulaire : enregistrement d'un versement Stripe reçu sur le compte bancaire.
@@ -17,9 +17,10 @@ import {
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant, getSettings, prochaineEcheance, doitEtreFixe } from '../services/helpers';
+import { formatMontant, formatDate, toISODate, getSettings, prochaineEcheance, doitEtreFixe } from '../services/helpers';
 import { Tooltip, ToggleSwitch, SelecteurFrequence } from './Shared';
 import { FileUpload } from './FileUpload';
+import { DateInput } from './common/DateInput';
 
 const TVA_TOOLTIP = `En franchise en base de TVA, vous ne collectez pas de TVA. Activez ce toggle uniquement si votre société est passée au régime réel assujetti à la TVA.`;
 
@@ -36,7 +37,7 @@ export function VersementStripe({ onCreated }) {
     const [periodeFin, setPeriodeFin] = useState('');
     const [montantBrut, setMontantBrut] = useState('');
     const [fraisStripe, setFraisStripe] = useState('');
-    const [dateVirement, setDateVirement] = useState(new Date().toISOString().split('T')[0]);
+    const [dateVirement, setDateVirement] = useState(toISODate(new Date()));
     const [tvaOn, setTvaOn] = useState(false);
     const [tauxTVA, setTauxTVA] = useState(20);
     const [recurrence, setRecurrence] = useState({
@@ -81,7 +82,7 @@ export function VersementStripe({ onCreated }) {
             const { ecritureId } = await ecrireEcriture({
                 journal: 'BQ',
                 date: dateVirement,
-                libelle: `Versement Stripe  ${clientNom}${periodeDebut ? `  ${periodeDebut}${periodeFin ? ' / ' + periodeFin : ''}` : ''}`,
+                libelle: `Versement Stripe — ${clientNom}${periodeDebut ? ` (${formatDate(periodeDebut)}${periodeFin ? ' / ' + formatDate(periodeFin) : ''})` : ''}`,
                 sourceType: 'versement_stripe',
                 mouvements,
             });
@@ -195,15 +196,15 @@ export function VersementStripe({ onCreated }) {
                 <div className="form-row--3 form-row">
                     <div className="form-group">
                         <label className="form-label">Début de période</label>
-                        <input type="date" className="form-input" value={periodeDebut} onChange={(e) => setPeriodeDebut(e.target.value)} />
+                        <DateInput className="form-input" value={periodeDebut} onChange={(e) => setPeriodeDebut(e.target.value)} />
                     </div>
                     <div className="form-group">
                         <label className="form-label">Fin de période</label>
-                        <input type="date" className="form-input" value={periodeFin} onChange={(e) => setPeriodeFin(e.target.value)} />
+                        <DateInput className="form-input" value={periodeFin} onChange={(e) => setPeriodeFin(e.target.value)} />
                     </div>
                     <div className="form-group">
                         <label className="form-label">Date du virement bancaire</label>
-                        <input type="date" className="form-input" value={dateVirement} onChange={(e) => setDateVirement(e.target.value)} required />
+                        <DateInput className="form-input" value={dateVirement} onChange={(e) => setDateVirement(e.target.value)} required />
                     </div>
                 </div>
             </div>

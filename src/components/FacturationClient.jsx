@@ -9,13 +9,15 @@
  * Contrainte stricte : AUCUN EMOJI. Design clair, sobre et efficace.
  */
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
     collection, getDocs, addDoc, doc, query, orderBy, serverTimestamp, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant } from '../services/helpers';
+import { formatMontant, formatDate, toISODate } from '../services/helpers';
 import { FileUpload } from './FileUpload';
+import { DateInput } from './common/DateInput';
 
 const RECURRENCES = [
     { value: 'unique', label: 'Ponctuel (une fois)', coefMRR: 0 },
@@ -35,7 +37,7 @@ const MODES_PAIEMENT = [
 const LIGNE_VIDE = (defaultDate = '') => ({
     id: Date.now() + Math.random(),
     description: '',
-    dateDebut: defaultDate || new Date().toISOString().split('T')[0],
+    dateDebut: defaultDate || toISODate(new Date()),
     quantite: 1,
     prixUnitaire: '',
     recurrence: 'mensuel',
@@ -58,7 +60,9 @@ function computeTotaux(lignes) {
 }
 
 export function FacturationClient() {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = toISODate(new Date());
+    const [searchParams] = useSearchParams();
+    const queryClientId = searchParams.get('clientId');
 
     const [clients, setClients] = useState([]);
     const [clientId, setClientId] = useState('');
@@ -88,8 +92,18 @@ export function FacturationClient() {
 
     useEffect(() => {
         getDocs(query(collection(db, 'clients'), orderBy('nom')))
-            .then((s) => setClients(s.docs.map((d) => ({ id: d.id, ...d.data() }))));
-    }, []);
+            .then((s) => {
+                const list = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+                setClients(list);
+                if (queryClientId) {
+                    const match = list.find((c) => c.id === queryClientId);
+                    if (match) {
+                        setClientId(match.id);
+                        setClientQ(`${match.nom} ${match.prenom ?? ''}`.trim());
+                    }
+                }
+            });
+    }, [queryClientId]);
 
     // Autocomplétion client
     const clientsFiltres = clientQ.length > 0
@@ -181,7 +195,7 @@ export function FacturationClient() {
                         const res = await ecrireEcriture({
                             journal: 'BQ',
                             date: dateVirementStripe || datePaiement || date,
-                            libelle: `Virement Stripe vers compte bancaire — ${libelle} (payé par client le ${datePaiement})`,
+                            libelle: `Virement Stripe vers compte bancaire — ${libelle} (payé par client le ${formatDate(datePaiement)})`,
                             sourceType: 'facturation',
                             mouvements: [
                                 { compte: '512', libelle: 'Banque', debit: stripeNet, credit: 0 },
@@ -299,8 +313,8 @@ export function FacturationClient() {
             <div className="notice notice--success">
                 Facturation de <strong>{formatMontant(done.totalFacture)}</strong> enregistrée pour <strong>{done.clientNom}</strong>.
                 {done.mrr > 0 && ` MRR généré : ${formatMontant(done.mrr)} / mois.`}
-                {done.withPayment && ` Client a payé le ${done.datePaiement}.`}
-                {done.dateVirementStripe && ` Virement vers le compte bancaire effectué le ${done.dateVirementStripe}.`}
+                {done.withPayment && ` Client a payé le ${formatDate(done.datePaiement)}.`}
+                {done.dateVirementStripe && ` Virement vers le compte bancaire effectué le ${formatDate(done.dateVirementStripe)}.`}
                 {done.nbDocuments > 0 && ` (${done.nbDocuments} justificatif(s) rattaché(s)).`}
             </div>
             <button
@@ -369,7 +383,7 @@ export function FacturationClient() {
                     </div>
                     <div className="form-group">
                         <label className="form-label">Date d'émission de la facture</label>
-                        <input type="date" className="form-input" value={date} onChange={(e) => setDate(e.target.value)} required />
+                        <DateInput className="form-input" value={date} onChange={(e) => setDate(e.target.value)} required />
                     </div>
                 </div>
             </div>
@@ -412,8 +426,8 @@ export function FacturationClient() {
                                     onChange={(e) => updateLigne(l.id, 'description', e.target.value)}
                                     placeholder={`Prestation / Abonnement ${idx + 1}`}
                                 />
-                                <input
-                                    type="date" className="form-input"
+                                <DateInput
+                                    className="form-input"
                                     value={l.dateDebut || date}
                                     onChange={(e) => updateLigne(l.id, 'dateDebut', e.target.value)}
                                     title="Date à laquelle l'abonnement ou la prestation commence"
@@ -500,8 +514,7 @@ export function FacturationClient() {
                                 <div className="form-row">
                                     <div className="form-group" style={{ marginBottom: 0 }}>
                                         <label className="form-label">Date du paiement par le client sur Stripe *</label>
-                                        <input
-                                            type="date"
+                                        <DateInput
                                             className="form-input"
                                             value={datePaiement}
                                             onChange={(e) => setDatePaiement(e.target.value)}
@@ -542,8 +555,7 @@ export function FacturationClient() {
                                         <div>
                                             <div className="form-group" style={{ maxWidth: 320, marginBottom: 14 }}>
                                                 <label className="form-label">Date du virement Stripe vers mon compte bancaire *</label>
-                                                <input
-                                                    type="date"
+                                                <DateInput
                                                     className="form-input"
                                                     value={dateVirementStripe}
                                                     onChange={(e) => setDateVirementStripe(e.target.value)}
@@ -594,8 +606,7 @@ export function FacturationClient() {
                                 <div className="form-row" style={{ marginBottom: 14 }}>
                                     <div className="form-group">
                                         <label className="form-label">Date du règlement reçu *</label>
-                                        <input
-                                            type="date"
+                                        <DateInput
                                             className="form-input"
                                             value={datePaiement}
                                             onChange={(e) => setDatePaiement(e.target.value)}
@@ -666,7 +677,7 @@ export function FacturationClient() {
                             </thead>
                             <tbody>
                                 <tr>
-                                    <td rowSpan={2} style={{ fontSize: 12 }}>{date}</td>
+                                    <td rowSpan={2} style={{ fontSize: 12 }}>{formatDate(date)}</td>
                                     <td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>VT</td>
                                     <td><code>411</code></td>
                                     <td>Clients</td>
@@ -686,7 +697,7 @@ export function FacturationClient() {
                                             virementRecu && strapeBrut > 0 ? (
                                                 <>
                                                     <tr style={{ borderTop: '2px dashed var(--border)' }}>
-                                                        <td rowSpan={3} style={{ fontSize: 12 }}>{dateVirementStripe || datePaiement}</td>
+                                                        <td rowSpan={3} style={{ fontSize: 12 }}>{formatDate(dateVirementStripe || datePaiement)}</td>
                                                         <td rowSpan={3} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
                                                         <td><code>512</code></td>
                                                         <td>Banque (Virement Stripe vers compte)</td>
@@ -710,7 +721,7 @@ export function FacturationClient() {
                                         ) : (
                                             <>
                                                 <tr style={{ borderTop: '2px dashed var(--border)' }}>
-                                                    <td rowSpan={2} style={{ fontSize: 12 }}>{datePaiement || date}</td>
+                                                    <td rowSpan={2} style={{ fontSize: 12 }}>{formatDate(datePaiement || date)}</td>
                                                     <td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
                                                     <td><code>512</code></td>
                                                     <td>Banque</td>

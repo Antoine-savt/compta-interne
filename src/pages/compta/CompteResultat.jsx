@@ -8,12 +8,13 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getEcrituresActives, calculerCompteResultat, hasEcrituresCache } from '../../services/comptaService';
-import { formatMontant } from '../../services/helpers';
+import { formatMontant, formatDate, toISODate } from '../../services/helpers';
+import { DateInput } from '../../components/common/DateInput';
 
 export default function CompteResultat() {
     const anneeCourante = new Date().getFullYear();
     const [dateDebut, setDateDebut] = useState(`${anneeCourante}-01-01`);
-    const [dateFin, setDateFin] = useState(new Date().toISOString().split('T')[0]);
+    const [dateFin, setDateFin] = useState(toISODate(new Date()));
     const [ecritures, setEcritures] = useState([]);
     const [loading, setLoading] = useState(() => !hasEcrituresCache());
     const [detailComptes, setDetailComptes] = useState(true);
@@ -66,7 +67,7 @@ export default function CompteResultat() {
 
             {/* Bannière de période visible uniquement à l'impression */}
             <div className="print-only" style={{ marginBottom: 16, fontSize: 13, color: '#374151', fontWeight: 600 }}>
-                Période d'exercice : du {dateDebut} au {dateFin}
+                Période d'exercice : du {formatDate(dateDebut)} au {formatDate(dateFin)}
             </div>
 
             {/* Barre de filtres de période */}
@@ -74,16 +75,14 @@ export default function CompteResultat() {
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>Période :</span>
-                        <input
-                            type="date"
+                        <DateInput
                             className="form-input"
                             style={{ width: 140 }}
                             value={dateDebut}
                             onChange={(e) => setDateDebut(e.target.value)}
                         />
                         <span>au</span>
-                        <input
-                            type="date"
+                        <DateInput
                             className="form-input"
                             style={{ width: 140 }}
                             value={dateFin}

@@ -18,8 +18,11 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant, formatDate } from '../services/helpers';
+import { formatMontant, formatDate, toISODate } from '../services/helpers';
 import { getCached, setCached, invalidateCache } from '../services/dataCache';
+import ModalCreateRdv from '../components/agenda/ModalCreateRdv';
+import { DateInput } from '../components/common/DateInput';
+import { getRendezVousList, createRendezVous, calculateEndTime } from '../services/rdvService';
 
 function Spinner() {
     return (
@@ -67,6 +70,7 @@ const CLIENT_STATUTS = [
     { id: 'client_actif', label: 'Client actif', cls: 'badge--success' },
     { id: 'projet_en_cours', label: 'Projet en cours', cls: 'badge--info' },
     { id: 'prospect', label: 'Prospect', cls: 'badge--warning' },
+    { id: 'client_inactif', label: 'Client inactif', cls: 'badge--muted' },
     { id: 'archive', label: 'Archivé', cls: 'badge--muted' },
 ];
 
@@ -101,6 +105,7 @@ export default function FicheClient() {
     const [saving, setSaving] = useState(false);
 
     // Modals RDV & Échanges
+    const [allRdvs, setAllRdvs] = useState([]);
     const [showRdvModal, setShowRdvModal] = useState(false);
     const [rdvForm, setRdvForm] = useState({
         date: '',
@@ -115,7 +120,7 @@ export default function FicheClient() {
 
     const [showAddExchange, setShowAddExchange] = useState(false);
     const [exchangeForm, setExchangeForm] = useState({
-        date: new Date().toISOString().split('T')[0],
+        date: toISODate(new Date()),
         titre: '',
         format: 'visio',
         contenu: '',
@@ -189,6 +194,9 @@ export default function FicheClient() {
             }
         }
         loadData();
+        getRendezVousList().then((list) => {
+            if (Array.isArray(list)) setAllRdvs(list);
+        });
     }, [clientId, navigate]);
 
     // ─── Actions de rattachement / détachement de dépenses ─────────────────────
@@ -393,9 +401,10 @@ export default function FicheClient() {
         if (!rdvForm.date) return;
         setSaving(true);
         try {
+            const hDebut = rdvForm.heure || '14:00';
             const payload = {
                 prochainRdvDate: rdvForm.date,
-                prochainRdvHeure: rdvForm.heure || '14:00',
+                prochainRdvHeure: hDebut,
                 prochainRdvFormat: rdvForm.format || 'visio',
                 prochainRdvObjet: rdvForm.objet.trim() || 'Point d\'étape',
                 prochainRdvLien: rdvForm.lien.trim(),
@@ -408,6 +417,24 @@ export default function FicheClient() {
             // Mettre à jour cache
             const cachedList = getCached('clients') || [];
             setCached('clients', cachedList.map((c) => (c.id === clientId ? { ...c, ...payload } : c)));
+
+            // Synchronisation avec la collection rendezvous pour affichage immédiat dans l'Agenda
+            await createRendezVous({
+                clientId,
+                clientNom: client.nom || 'Client',
+                clientContact: `${client.contactPrenom || ''} ${client.contactNom || ''}`.trim() || client.contact || '',
+                clientTelephone: client.telephone || '',
+                clientEmail: client.email || '',
+                quiGere: client.quiGere || 'Antoine',
+                date: rdvForm.date,
+                heureDebut: hDebut,
+                heureFin: calculateEndTime(hDebut, 30),
+                dureeMinutes: 30,
+                type: rdvForm.format || 'visio',
+                notes: rdvForm.objet.trim() || 'Point d\'étape',
+                lienVisio: rdvForm.lien.trim(),
+                statut: 'planifie',
+            });
         } catch (err) {
             console.error('Erreur enregistrement RDV:', err);
         } finally {
@@ -620,7 +647,7 @@ export default function FicheClient() {
 
     const cat = categories.find((c) => c.id === client.categorieId);
     const siteStatutObj = SITE_STATUTS.find((s) => s.id === client.siteStatut) || SITE_STATUTS[0];
-    const clientStatutObj = CLIENT_STATUTS.find((s) => s.id === client.statutClient) || CLIENT_STATUTS[0];
+    const clientStatutObj = CLIENT_STATUTS.find((s) => s.id === (client.statutGlobal || client.statutClient)) || CLIENT_STATUTS[0];
     const siteTypeObj = SITE_TYPES.find((t) => t.id === client.siteType) || SITE_TYPES[0];
 
     // Calcul date de renouvellement & alerte
@@ -674,8 +701,19 @@ export default function FicheClient() {
                             client.contactRole || null,
                             client.email || null,
                             client.telephone || null,
+                            client.quiGere ? `Géré par : ${client.quiGere}` : null,
                         ].filter(Boolean).join('  ·  ')}
                     </div>
+                    {(client.prochaineAction || client.dernierContactDate) && (
+                        <div style={{ marginTop: 6, fontSize: 12, display: 'flex', gap: 14, color: 'var(--text-muted)' }}>
+                            {client.dernierContactDate && (
+                                <span>Dernier contact : <strong>{formatDate(client.dernierContactDate)}</strong></span>
+                            )}
+                            {client.prochaineAction && (
+                                <span>Prochaine action : <strong style={{ color: 'var(--accent)' }}>{client.prochaineAction}</strong></span>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -703,7 +741,7 @@ export default function FicheClient() {
                     <button
                         type="button"
                         className="btn btn--ghost btn--sm"
-                        onClick={() => navigate(`/factures/nouvelle?clientId=${client.id}`)}
+                        onClick={() => navigate(`/facturation/nouvelle?clientId=${client.id}`)}
                     >
                         + Nouvelle facture
                     </button>
@@ -980,8 +1018,7 @@ export default function FicheClient() {
                             <div className="form-row">
                                 <div className="form-group">
                                     <label className="form-label">Date mise en ligne</label>
-                                    <input
-                                        type="date"
+                                    <DateInput
                                         className="form-input"
                                         value={editForm.siteDateLigne ?? ''}
                                         onChange={(e) => setEditForm((f) => ({ ...f, siteDateLigne: e.target.value }))}
@@ -989,8 +1026,7 @@ export default function FicheClient() {
                                 </div>
                                 <div className="form-group">
                                     <label className="form-label">Échéance renouvellement</label>
-                                    <input
-                                        type="date"
+                                    <DateInput
                                         className="form-input"
                                         value={editForm.siteDateRenouvellement ?? ''}
                                         onChange={(e) => setEditForm((f) => ({ ...f, siteDateRenouvellement: e.target.value }))}
@@ -1252,8 +1288,7 @@ export default function FicheClient() {
                                 <div className="form-row" style={{ marginBottom: 10 }}>
                                     <div className="form-group" style={{ marginBottom: 0 }}>
                                         <label className="form-label" style={{ fontSize: 12 }}>Date</label>
-                                        <input
-                                            type="date"
+                                        <DateInput
                                             className="form-input"
                                             value={exchangeForm.date}
                                             onChange={(e) => setExchangeForm((f) => ({ ...f, date: e.target.value }))}
@@ -1533,7 +1568,7 @@ export default function FicheClient() {
                         <button
                             type="button"
                             className="btn btn--primary btn--sm"
-                            onClick={() => navigate(`/factures/nouvelle?clientId=${client.id}`)}
+                            onClick={() => navigate(`/facturation/nouvelle?clientId=${client.id}`)}
                         >
                             + Émettre une facture
                         </button>
@@ -1762,93 +1797,28 @@ export default function FicheClient() {
                 )}
             </div>
 
-            {/* ─── Modal Planifier / Modifier Rendez-vous ─── */}
+            {/* ─── Modal Planifier / Modifier Rendez-vous (Connecté à l'Agenda) ─── */}
             {showRdvModal && (
-                <div style={{
-                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    zIndex: 1000, padding: 20,
-                }}>
-                    <div className="card" style={{ maxWidth: 460, width: '100%', padding: 24, boxShadow: 'var(--shadow-md)' }}>
-                        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 16 }}>
-                            {client.prochainRdvDate ? 'Modifier le rendez-vous' : 'Planifier un rendez-vous'}
-                        </div>
-
-                        <div className="form-row">
-                            <div className="form-group">
-                                <label className="form-label">Date *</label>
-                                <input
-                                    type="date"
-                                    className="form-input"
-                                    value={rdvForm.date}
-                                    onChange={(e) => setRdvForm((f) => ({ ...f, date: e.target.value }))}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label className="form-label">Heure *</label>
-                                <input
-                                    type="time"
-                                    className="form-input"
-                                    value={rdvForm.heure}
-                                    onChange={(e) => setRdvForm((f) => ({ ...f, heure: e.target.value }))}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="form-group">
-                            <label className="form-label">Format de l'échange</label>
-                            <select
-                                className="form-select"
-                                value={rdvForm.format}
-                                onChange={(e) => setRdvForm((f) => ({ ...f, format: e.target.value }))}
-                            >
-                                {RDV_FORMATS.map((f) => (
-                                    <option key={f.id} value={f.id}>{f.label}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div className="form-group">
-                            <label className="form-label">Objet de la réunion *</label>
-                            <input
-                                type="text"
-                                className="form-input"
-                                placeholder="Ex. Validation maquette accueil, point d'étape..."
-                                value={rdvForm.objet}
-                                onChange={(e) => setRdvForm((f) => ({ ...f, objet: e.target.value }))}
-                            />
-                        </div>
-
-                        <div className="form-group">
-                            <label className="form-label">Lien de visioconférence ou adresse</label>
-                            <input
-                                type="text"
-                                className="form-input"
-                                placeholder="https://meet.google.com/... ou adresse"
-                                value={rdvForm.lien}
-                                onChange={(e) => setRdvForm((f) => ({ ...f, lien: e.target.value }))}
-                            />
-                        </div>
-
-                        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
-                            <button
-                                type="button"
-                                className="btn btn--ghost"
-                                onClick={() => setShowRdvModal(false)}
-                            >
-                                Annuler
-                            </button>
-                            <button
-                                type="button"
-                                className="btn btn--primary"
-                                disabled={saving || !rdvForm.date || !rdvForm.objet.trim()}
-                                onClick={handleSaveRdv}
-                            >
-                                {saving ? 'Enregistrement...' : 'Confirmer le rendez-vous'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <ModalCreateRdv
+                    preselectedClient={client}
+                    preselectedDate={client.prochainRdvDate || new Date().toISOString().split('T')[0]}
+                    preselectedTime={client.prochainRdvHeure || '14:00'}
+                    clients={[client]}
+                    allRdvs={allRdvs}
+                    onClose={() => setShowRdvModal(false)}
+                    onSaved={(saved) => {
+                        setAllRdvs((prev) => [...prev.filter((r) => r.id !== saved.id), saved]);
+                        setClient((prev) => ({
+                            ...prev,
+                            prochainRdvDate: saved.date,
+                            prochainRdvHeure: saved.heureDebut,
+                            prochainRdvFormat: saved.type,
+                            prochainRdvObjet: saved.notes || `Rendez-vous ${saved.type}`,
+                            prochainRdvLien: saved.lienVisio || saved.lieu || '',
+                        }));
+                        setShowRdvModal(false);
+                    }}
+                />
             )}
 
             {/* ─── Modal Terminer le Rendez-vous & Archiver ─── */}
@@ -1897,6 +1867,29 @@ export default function FicheClient() {
                     </div>
                 </div>
             )}
+
+            {/* ─── Modale : Rattacher une Dépense Existante ───────────────── */}
+            {showAttachDepenseModal && (
+                <ModalRattacherDepense
+                    client={client}
+                    depenses={allDepenses}
+                    onRattacher={handleRattacherDepense}
+                    onDetacher={handleDetacherDepense}
+                    onClose={() => setShowAttachDepenseModal(false)}
+                />
+            )}
+
+            {/* ─── Modale : Rattacher une Recette / Facture Existante ───────── */}
+            {showAttachRecetteModal && (
+                <ModalRattacherRecette
+                    client={client}
+                    factures={allFactures}
+                    facturations={allFacturations}
+                    onRattacher={handleRattacherRecette}
+                    onDetacher={handleDetacherRecette}
+                    onClose={() => setShowAttachRecetteModal(false)}
+                />
+            )}
         </div>
     );
 }
@@ -1933,7 +1926,14 @@ function ModalRattacherDepense({ client, depenses, onRattacher, onDetacher, onCl
                             Sélectionnez les dépenses à imputer à ce projet pour mettre à jour la marge nette.
                         </div>
                     </div>
-                    <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>X</button>
+                    <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={onClose}
+                        style={{ padding: '4px 8px', fontSize: 14 }}
+                    >
+                        ✕
+                    </button>
                 </div>
 
                 <div className="modal-body">
@@ -2075,6 +2075,7 @@ function ModalRattacherDepense({ client, depenses, onRattacher, onDetacher, onCl
 // ─── Modal : Rattacher une Recette / Facture ─────────────────────────────────
 function ModalRattacherRecette({ client, factures, facturations, onRattacher, onDetacher, onClose }) {
     const [search, setSearch] = useState('');
+    const [filterTab, setFilterTab] = useState('toutes'); // 'toutes' | 'libres' | 'liees'
 
     const allRecettes = useMemo(() => {
         const list = [];
@@ -2085,12 +2086,18 @@ function ModalRattacherRecette({ client, factures, facturations, onRattacher, on
 
     const filtered = useMemo(() => {
         return allRecettes.filter((r) => {
+            const isLieeCeClient = r.clientId === client.id;
+            const isLibre = !r.clientId;
+
+            if (filterTab === 'libres' && !isLibre) return false;
+            if (filterTab === 'liees' && !isLieeCeClient) return false;
+
             if (!search.trim()) return true;
             const q = search.toLowerCase();
             const text = `${r.refTitre} ${r.clientNom || ''} ${r.totalFacture || r.totalTTC || ''}`.toLowerCase();
             return text.includes(q);
         });
-    }, [allRecettes, search]);
+    }, [allRecettes, client, search, filterTab]);
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -2101,22 +2108,57 @@ function ModalRattacherRecette({ client, factures, facturations, onRattacher, on
                             Rattacher des factures ou recettes à {client.nom}
                         </div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                            Affectez les factures existantes à ce dossier client.
+                            Affectez les factures et recettes existantes à ce dossier client.
                         </div>
                     </div>
-                    <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>X</button>
+                    <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={onClose}
+                        style={{ padding: '4px 8px', fontSize: 14 }}
+                    >
+                        ✕
+                    </button>
                 </div>
 
                 <div className="modal-body">
-                    <input
-                        type="text"
-                        className="form-input"
-                        placeholder="Rechercher par référence, libellé, montant..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        style={{ width: '100%', marginBottom: 14 }}
-                        autoFocus
-                    />
+                    <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+                        <input
+                            type="text"
+                            className="form-input"
+                            placeholder="Rechercher par référence, libellé, montant..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            style={{ flex: 1, minWidth: 200 }}
+                            autoFocus
+                        />
+                        <div className="view-tabs">
+                            <button
+                                type="button"
+                                className={`view-tab-btn ${filterTab === 'toutes' ? 'view-tab-btn--active' : ''}`}
+                                onClick={() => setFilterTab('toutes')}
+                                style={{ padding: '4px 10px', fontSize: 12 }}
+                            >
+                                Toutes ({allRecettes.length})
+                            </button>
+                            <button
+                                type="button"
+                                className={`view-tab-btn ${filterTab === 'libres' ? 'view-tab-btn--active' : ''}`}
+                                onClick={() => setFilterTab('libres')}
+                                style={{ padding: '4px 10px', fontSize: 12 }}
+                            >
+                                Non rattachées
+                            </button>
+                            <button
+                                type="button"
+                                className={`view-tab-btn ${filterTab === 'liees' ? 'view-tab-btn--active' : ''}`}
+                                onClick={() => setFilterTab('liees')}
+                                style={{ padding: '4px 10px', fontSize: 12 }}
+                            >
+                                Rattachées à ce client
+                            </button>
+                        </div>
+                    </div>
 
                     {filtered.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)', fontSize: 13 }}>

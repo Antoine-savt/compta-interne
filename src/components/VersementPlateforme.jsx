@@ -1,4 +1,4 @@
-﻿/**
+/**
  * VersementPlateforme.jsx
  * 
  * Formulaire : enregistrement d'un reversement App Store / Google Play pour
@@ -21,9 +21,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant } from '../services/helpers';
+import { formatMontant, toISODate } from '../services/helpers';
 import { Tooltip } from './Shared';
 import { FileUpload } from './FileUpload';
+import { DateInput } from './common/DateInput';
 
 const PLATEFORMES = ['App Store (Apple)', 'Google Play Store'];
 
@@ -34,7 +35,7 @@ export function VersementPlateforme({ onCreated }) {
     );
     const [montantBrut, setMontantBrut] = useState('');
     const [commission, setCommission] = useState('');
-    const [dateVersement, setDateVersement] = useState(new Date().toISOString().split('T')[0]);
+    const [dateVersement, setDateVersement] = useState(toISODate(new Date()));
     const [documentIds, setDocumentIds] = useState([]);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
@@ -147,8 +148,8 @@ export function VersementPlateforme({ onCreated }) {
                     </div>
                     <div className="form-group">
                         <label className="form-label">Date du versement reçu</label>
-                        <input
-                            type="date" className="form-input"
+                        <DateInput
+                            className="form-input"
                             value={dateVersement}
                             onChange={(e) => setDateVersement(e.target.value)}
                             required

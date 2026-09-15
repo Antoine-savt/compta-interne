@@ -18,6 +18,10 @@ import { db } from '../firebase';
 import { formatMontant, formatDate } from '../services/helpers';
 import { getCached, setCached } from '../services/dataCache';
 import { SITE_STATUTS, getStatutClient } from '../services/clientConstants';
+import ClientsProspectsTable from '../components/clients/ClientsProspectsTable';
+import { getCustomColumns } from '../services/crmCustomColumnsService';
+import { getGestionnaires } from '../services/crmGestionnairesService';
+import ModalQuickAvailability from '../components/clients/ModalQuickAvailability';
 
 function Spinner() {
     return (
@@ -37,14 +41,16 @@ function Spinner() {
 export default function Clients() {
     const navigate = useNavigate();
 
-    // Vues ClickUp : 'tableau' | 'kanban' | 'rentabilite'
-    const [currentView, setCurrentView] = useState('tableau');
-    const [kanbanGroupBy, setKanbanGroupBy] = useState('statut'); // 'statut' | 'categorie'
+    // Vues ClickUp : 'clients_prospects' | 'tableau' | 'rentabilite'
+    const [currentView, setCurrentView] = useState('clients_prospects');
     const [rentabiliteFiltre, setRentabiliteFiltre] = useState('tous'); // 'tous' | 'rentables' | 'deficitaires' | 'non_factures'
 
     // Données principales
     const [clients, setClients] = useState(() => getCached('clients') || []);
     const [categories, setCategories] = useState(() => getCached('categoriesClient') || []);
+    const [associes, setAssocies] = useState(() => getCached('associes') || []);
+    const [gestionnaires, setGestionnaires] = useState(() => getCached('crm_gestionnaires') || []);
+    const [customColumns, setCustomColumns] = useState(() => getCached('crm_custom_columns') || []);
     const [loading, setLoading] = useState(() => !getCached('clients'));
 
     // Filtres & Recherche
@@ -54,6 +60,8 @@ export default function Clients() {
 
     // Modal nouveau client
     const [showNewModal, setShowNewModal] = useState(false);
+    // Modal disponibilités rapides
+    const [showQuickAvailModal, setShowQuickAvailModal] = useState(false);
     const [newClient, setNewClient] = useState({
         nom: '',
         contactPrenom: '',
@@ -71,21 +79,31 @@ export default function Clients() {
     });
     const [saving, setSaving] = useState(false);
 
-    // Chargement complet et parallèle (clients, factures, facturations, versements, dépenses)
+    // Chargement complet et parallèle (clients, factures, facturations, versements, dépenses, associés, colonnes CRM)
     const load = useCallback(async () => {
         try {
-            const [cliSnap, catSnap, factSnap, factuSnap, depSnap, versSnap] = await Promise.all([
+            const [cliSnap, catSnap, factSnap, factuSnap, depSnap, versSnap, assSnap, cols, gests] = await Promise.all([
                 getDocs(query(collection(db, 'clients'), orderBy('nom'))),
                 getDocs(query(collection(db, 'categoriesClient'), orderBy('ordre'))),
                 getDocs(collection(db, 'factures')),
                 getDocs(collection(db, 'facturations')),
                 getDocs(collection(db, 'depenses')),
                 getDocs(collection(db, 'versementsStripe')),
+                getDocs(collection(db, 'associes')),
+                getCustomColumns(),
+                getGestionnaires(),
             ]);
 
             const cats = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
             setCategories(cats);
             setCached('categoriesClient', cats);
+
+            const assList = assSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            setAssocies(assList);
+            setCached('associes', assList);
+
+            setCustomColumns(cols);
+            setGestionnaires(gests);
 
             const facts = factSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
             const factus = factuSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -118,21 +136,82 @@ export default function Clients() {
                 );
                 const totalStripe = versClient.reduce((s, v) => s + (v.montantBrut ?? 0), 0);
 
-                // Estimation abonnement Stripe
+                // Helper parsing numérique tolérant (string, virgules, devises)
+                const parseNum = (val) => {
+                    if (val === undefined || val === null || val === '') return 0;
+                    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+                    const clean = String(val).replace(',', '.').replace(/[^0-9.-]+/g, '');
+                    const num = parseFloat(clean);
+                    return isNaN(num) ? 0 : num;
+                };
+
+                // 1. MRR depuis les facturations récurrentes rattachées (collection 'facturations')
+                let mrrFacturations = 0;
+                facturationsClient.forEach((f) => {
+                    const directMrr = parseNum(f.mrr) || parseNum(f.abonnementMensuel) || parseNum(f.forfaitMensuel);
+                    if (directMrr > 0) {
+                        mrrFacturations += directMrr;
+                    } else if (Array.isArray(f.lignes)) {
+                        f.lignes.forEach((l) => {
+                            const pu = parseNum(l.prixUnitaire);
+                            const qte = parseNum(l.quantite) || 1;
+                            const tot = pu * qte;
+                            if (l.recurrence === 'mensuel') mrrFacturations += tot;
+                            else if (l.recurrence === 'trimestriel') mrrFacturations += tot / 3;
+                            else if (l.recurrence === 'semestriel') mrrFacturations += tot / 6;
+                            else if (l.recurrence === 'annuel') mrrFacturations += tot / 12;
+                            else if (l.mrr) mrrFacturations += parseNum(l.mrr);
+                        });
+                    }
+                });
+
+                // Vérifier également les factures légales (collection 'factures')
+                facturesClient.forEach((f) => {
+                    const directMrr = parseNum(f.mrr) || parseNum(f.abonnementMensuel) || parseNum(f.forfaitMensuel);
+                    if (directMrr > 0) {
+                        mrrFacturations += directMrr;
+                    } else if (Array.isArray(f.lignes)) {
+                        f.lignes.forEach((l) => {
+                            const pu = parseNum(l.prixUnitaire);
+                            const qte = parseNum(l.quantite) || 1;
+                            const tot = pu * qte;
+                            if (l.recurrence === 'mensuel' || (l.recurrence?.type === 'recurrent' && l.recurrence?.intervalleUnite === 'mois')) {
+                                mrrFacturations += tot;
+                            } else if (l.recurrence === 'annuel' || (l.recurrence?.type === 'recurrent' && l.recurrence?.intervalleUnite === 'annee')) {
+                                mrrFacturations += tot / 12;
+                            }
+                        });
+                    }
+                });
+
+                // 2. MRR manuel ou existant directement sur la fiche client
+                const mrrManuel = parseNum(data.abonnementMensuelManuel) ||
+                                  parseNum(data.abonnementMensuel) ||
+                                  parseNum(data.mrr) ||
+                                  parseNum(data.abonnement) ||
+                                  parseNum(data.forfaitMensuel) ||
+                                  parseNum(data.forfaitMRR) ||
+                                  parseNum(data.montantAbonnement) ||
+                                  parseNum(data.mrrMensuel) ||
+                                  parseNum(data.forfait) ||
+                                  0;
+
+                // 3. Estimation Stripe
                 let aboStripe = 0;
                 versClient.forEach((v) => {
-                    if (v.recurrence?.type === 'recurrent' && v.abonnementMensuelEstime) {
-                        aboStripe = Math.max(aboStripe, v.abonnementMensuelEstime);
+                    if (v.recurrence?.type === 'recurrent') {
+                        const est = parseNum(v.abonnementMensuelEstime) || parseNum(v.montantBrut) || 0;
+                        aboStripe = Math.max(aboStripe, est);
+                    } else if (v.abonnementMensuelEstime) {
+                        aboStripe = Math.max(aboStripe, parseNum(v.abonnementMensuelEstime));
                     }
                 });
 
                 // CA total estimé / encaissé
                 const totalEncaisse = Math.max(totalFacture, totalStripe);
 
-                // MRR
-                const mrr = data.abonnementMensuelManuel
-                    ? parseFloat(data.abonnementMensuelManuel) || 0
-                    : aboStripe;
+                // MRR consolidé du client (manuel prioritaire, sinon facturations récurrentes, sinon Stripe)
+                const mrr = mrrManuel > 0 ? mrrManuel : (mrrFacturations > 0 ? mrrFacturations : aboStripe);
 
                 // 4. Dépenses rattachées
                 const depensesClient = deps.filter((dp) =>
@@ -151,6 +230,12 @@ export default function Clients() {
                 return {
                     id: cId,
                     ...data,
+                    statutGlobal: data.statutGlobal || 'client_actif',
+                    quiGere: data.quiGere || '',
+                    dernierContactDate: data.dernierContactDate || '',
+                    prochaineAction: data.prochaineAction || '',
+                    notes: data.notes || '',
+                    customFields: data.customFields || {},
                     siteStatut: data.siteStatut || 'en_ligne',
                     totalFacture,
                     totalEncaisse,
@@ -158,6 +243,8 @@ export default function Clients() {
                     margeNette,
                     pourcentageMarge,
                     abonnementMensuel: mrr,
+                    mrr: mrr,
+                    abonnementMensuelManuel: mrrManuel > 0 ? mrrManuel : (mrr > 0 ? mrr : 0),
                     nbFactures: facturesClient.length + facturationsClient.length,
                     nbDepenses: depensesClient.length,
                 };
@@ -201,7 +288,7 @@ export default function Clients() {
         const totalDepenses = filtered.reduce((s, c) => s + (c.totalDepenses || 0), 0);
         const margeNette = totalFacture - totalDepenses;
         const margeTaux = totalFacture > 0 ? Math.round((margeNette / totalFacture) * 100) : 0;
-        const totalMRR = filtered.reduce((s, c) => s + (c.abonnementMensuel || 0), 0);
+        const totalMRR = filtered.reduce((s, c) => s + (parseFloat(c.abonnementMensuel || c.mrr) || 0), 0);
 
         return { totalFacture, totalDepenses, margeNette, margeTaux, totalMRR };
     }, [filtered]);
@@ -277,6 +364,12 @@ export default function Clients() {
             categorieId: newClient.categorieId || null,
             categorieNom: catObj?.nom || null,
             abonnementMensuelManuel: parseFloat(newClient.abonnementMensuelManuel) || 0,
+            statutGlobal: 'client_actif',
+            quiGere: '',
+            dernierContactDate: '',
+            prochaineAction: '',
+            notes: '',
+            customFields: {},
             totalFacture: 0,
             totalEncaisse: 0,
             totalDepenses: 0,
@@ -326,6 +419,12 @@ export default function Clients() {
                 categorieId: clientToAdd.categorieId,
                 categorieNom: clientToAdd.categorieNom,
                 abonnementMensuelManuel: clientToAdd.abonnementMensuelManuel,
+                statutGlobal: 'client_actif',
+                quiGere: '',
+                dernierContactDate: '',
+                prochaineAction: '',
+                notes: '',
+                customFields: {},
                 taches: [],
                 historiqueEchanges: [],
                 createdAt: serverTimestamp(),
@@ -371,6 +470,20 @@ export default function Clients() {
                     </p>
                 </div>
                 <div className="page-header__actions">
+                    <button
+                        className="btn btn--secondary"
+                        onClick={() => setShowQuickAvailModal(true)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 }}
+                        title="Consulter les disponibilités en direct et bloquer un créneau pendant un appel"
+                    >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                        </svg>
+                        <span>Disponibilités & Réservation rapide</span>
+                    </button>
                     <button className="btn btn--primary" onClick={() => setShowNewModal(true)}>
                         + Nouveau client
                     </button>
@@ -384,18 +497,18 @@ export default function Clients() {
             <div className="view-tabs">
                 <button
                     type="button"
-                    className={`view-tab-btn ${currentView === 'tableau' ? 'view-tab-btn--active' : ''}`}
-                    onClick={() => setCurrentView('tableau')}
+                    className={`view-tab-btn ${currentView === 'clients_prospects' ? 'view-tab-btn--active' : ''}`}
+                    onClick={() => setCurrentView('clients_prospects')}
                 >
-                    Tableau
-                    <span className="view-tab-badge">{filtered.length}</span>
+                    Clients & Prospects
+                    <span className="view-tab-badge">{clients.length}</span>
                 </button>
                 <button
                     type="button"
-                    className={`view-tab-btn ${currentView === 'kanban' ? 'view-tab-btn--active' : ''}`}
-                    onClick={() => setCurrentView('kanban')}
+                    className={`view-tab-btn ${currentView === 'tableau' ? 'view-tab-btn--active' : ''}`}
+                    onClick={() => setCurrentView('tableau')}
                 >
-                    Kanban
+                    Vue Financière
                     <span className="view-tab-badge">{filtered.length}</span>
                 </button>
                 <button
@@ -407,87 +520,73 @@ export default function Clients() {
                 </button>
             </div>
 
-            {/* Filtres & Recherche (disponibles sur toutes les vues) */}
-            <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-                <input
-                    type="text"
-                    className="form-input"
-                    placeholder="Rechercher par nom, site, contact, hébergeur..."
-                    style={{ maxWidth: 290 }}
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                />
-                <select
-                    className="form-select"
-                    style={{ maxWidth: 190 }}
-                    value={catFiltreId}
-                    onChange={(e) => setCatFiltreId(e.target.value)}
-                >
-                    <option value="">Toutes catégories</option>
-                    <option value="__none__">Non catégorisé</option>
-                    {categories.map((c) => (
-                        <option key={c.id} value={c.id}>{c.nom}</option>
-                    ))}
-                </select>
-                <select
-                    className="form-select"
-                    style={{ maxWidth: 180 }}
-                    value={statutFiltre}
-                    onChange={(e) => setStatutFiltre(e.target.value)}
-                >
-                    <option value="">Tous les statuts web</option>
-                    {SITE_STATUTS.map((s) => (
-                        <option key={s.id} value={s.id}>{s.label}</option>
-                    ))}
-                </select>
-                {(search || catFiltreId || statutFiltre) && (
-                    <button
-                        type="button"
-                        className="btn btn--ghost btn--sm"
-                        onClick={() => { setSearch(''); setCatFiltreId(''); setStatutFiltre(''); }}
+            {/* Filtres & Recherche (pour les vues financière, kanban et rentabilité) */}
+            {currentView !== 'clients_prospects' && (
+                <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Rechercher par nom, site, contact, hébergeur..."
+                        style={{ maxWidth: 290 }}
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                    />
+                    <select
+                        className="form-select"
+                        style={{ maxWidth: 190 }}
+                        value={catFiltreId}
+                        onChange={(e) => setCatFiltreId(e.target.value)}
                     >
-                        Réinitialiser
-                    </button>
-                )}
-
-                {/* Sélecteur de regroupement spécifique au Kanban */}
-                {currentView === 'kanban' && (
-                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Grouper par :</span>
-                        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
-                            <button
-                                type="button"
-                                style={{
-                                    padding: '5px 10px', fontSize: 12, border: 'none', cursor: 'pointer',
-                                    background: kanbanGroupBy === 'statut' ? 'var(--accent)' : 'var(--bg2)',
-                                    color: kanbanGroupBy === 'statut' ? '#fff' : 'var(--text)',
-                                    fontWeight: 500,
-                                }}
-                                onClick={() => setKanbanGroupBy('statut')}
-                            >
-                                Statut du site
-                            </button>
-                            <button
-                                type="button"
-                                style={{
-                                    padding: '5px 10px', fontSize: 12, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer',
-                                    background: kanbanGroupBy === 'categorie' ? 'var(--accent)' : 'var(--bg2)',
-                                    color: kanbanGroupBy === 'categorie' ? '#fff' : 'var(--text)',
-                                    fontWeight: 500,
-                                }}
-                                onClick={() => setKanbanGroupBy('categorie')}
-                            >
-                                Catégories
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
+                        <option value="">Toutes catégories</option>
+                        <option value="__none__">Non catégorisé</option>
+                        {categories.map((c) => (
+                            <option key={c.id} value={c.id}>{c.nom}</option>
+                        ))}
+                    </select>
+                    <select
+                        className="form-select"
+                        style={{ maxWidth: 180 }}
+                        value={statutFiltre}
+                        onChange={(e) => setStatutFiltre(e.target.value)}
+                    >
+                        <option value="">Tous les statuts web</option>
+                        {SITE_STATUTS.map((s) => (
+                            <option key={s.id} value={s.id}>{s.label}</option>
+                        ))}
+                    </select>
+                    {(search || catFiltreId || statutFiltre) && (
+                        <button
+                            type="button"
+                            className="btn btn--ghost btn--sm"
+                            onClick={() => { setSearch(''); setCatFiltreId(''); setStatutFiltre(''); }}
+                        >
+                            Réinitialiser
+                        </button>
+                    )}
+                </div>
+            )}
 
             {loading && <Spinner />}
 
             {/* ═══════════════════════════════════════════════════════════════════
-                VUE 1 : TABLEAU
+                VUE 0 : CLIENTS & PROSPECTS (CLICKUP / EXCEL HAUTE DENSITÉ)
+            ════════════════════════════════════════════════════════════════════ */}
+            {!loading && currentView === 'clients_prospects' && (
+                <ClientsProspectsTable
+                    clients={clients}
+                    setClients={setClients}
+                    categories={categories}
+                    associes={associes}
+                    gestionnaires={gestionnaires}
+                    setGestionnaires={setGestionnaires}
+                    customColumns={customColumns}
+                    setCustomColumns={setCustomColumns}
+                    onReload={load}
+                />
+            )}
+
+            {/* ═══════════════════════════════════════════════════════════════════
+                VUE 1 : TABLEAU FINANCIER
             ════════════════════════════════════════════════════════════════════ */}
             {!loading && currentView === 'tableau' && (
                 <>
@@ -687,231 +786,6 @@ export default function Clients() {
             )}
 
             {/* ═══════════════════════════════════════════════════════════════════
-                VUE 2 : KANBAN (Board style ClickUp)
-            ════════════════════════════════════════════════════════════════════ */}
-            {!loading && currentView === 'kanban' && (
-                <div className="kanban-board">
-                    {kanbanGroupBy === 'statut' ? (
-                        // Kanban groupé par statut de site internet
-                        SITE_STATUTS.map((statut) => {
-                            const columnClients = filtered.filter((c) => c.siteStatut === statut.id);
-                            const caColonne = columnClients.reduce((s, c) => s + (c.totalFacture || c.totalEncaisse || 0), 0);
-
-                            return (
-                                <div key={statut.id} className="kanban-column">
-                                    <div className="kanban-column-header">
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: statut.color }} />
-                                            <span style={{ fontWeight: 600, fontSize: 13 }}>{statut.label}</span>
-                                            <span className="badge badge--muted" style={{ fontSize: 11 }}>{columnClients.length}</span>
-                                        </div>
-                                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>
-                                            {formatMontant(caColonne)}
-                                        </div>
-                                    </div>
-
-                                    <div className="kanban-column-body">
-                                        {columnClients.length === 0 ? (
-                                            <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-                                                Aucun client
-                                            </div>
-                                        ) : (
-                                            columnClients.map((c) => {
-                                                const cat = catMap[c.categorieId];
-                                                const contactComplet = [c.contactPrenom, c.contactNom].filter(Boolean).join(' ');
-
-                                                return (
-                                                    <div
-                                                        key={c.id}
-                                                        className="kanban-card"
-                                                        onClick={() => navigate(`/clients/${c.id}`)}
-                                                    >
-                                                        {/* Header de la carte */}
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                                                            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>
-                                                                {c.nom}
-                                                            </div>
-                                                            {cat && (
-                                                                <span
-                                                                    className="badge"
-                                                                    style={{
-                                                                        fontSize: 10,
-                                                                        background: cat.couleur + '18',
-                                                                        color: cat.couleur,
-                                                                        border: `1px solid ${cat.couleur}44`,
-                                                                    }}
-                                                                >
-                                                                    {cat.nom}
-                                                                </span>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Site internet */}
-                                                        {c.siteUrl && (
-                                                            <a
-                                                                href={c.siteUrl.startsWith('http') ? c.siteUrl : `https://${c.siteUrl}`}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500 }}
-                                                                onClick={(e) => e.stopPropagation()}
-                                                            >
-                                                                {c.siteUrl.replace(/^https?:\/\//, '')} [↗]
-                                                            </a>
-                                                        )}
-
-                                                        {/* Contact & Prochain RDV */}
-                                                        <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                                            {contactComplet && <span>Contact : {contactComplet}</span>}
-                                                            {c.prochainRdvDate && (
-                                                                <span style={{ color: 'var(--text)', fontWeight: 500 }}>
-                                                                    RDV : {formatDate(c.prochainRdvDate)} {c.prochainRdvHeure ? `à ${c.prochainRdvHeure}` : ''}
-                                                                </span>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Métriques financières */}
-                                                        <div className="kanban-card-metrics">
-                                                            <div>
-                                                                <div style={{ color: 'var(--text-muted)' }}>Facturé</div>
-                                                                <div style={{ fontWeight: 600 }}>{formatMontant(c.totalFacture)}</div>
-                                                            </div>
-                                                            <div>
-                                                                <div style={{ color: 'var(--text-muted)' }}>Dépenses</div>
-                                                                <div style={{ fontWeight: 600, color: c.totalDepenses > 0 ? 'var(--danger)' : 'var(--text)' }}>
-                                                                    {c.totalDepenses > 0 ? `− ${formatMontant(c.totalDepenses)}` : '0,00 €'}
-                                                                </div>
-                                                            </div>
-                                                            <div>
-                                                                <div style={{ color: 'var(--text-muted)' }}>Marge</div>
-                                                                <div style={{ fontWeight: 700, color: c.margeNette >= 0 ? 'var(--success)' : 'var(--danger)' }}>
-                                                                    {formatMontant(c.margeNette)}
-                                                                </div>
-                                                            </div>
-                                                            <div>
-                                                                <div style={{ color: 'var(--text-muted)' }}>MRR</div>
-                                                                <div style={{ fontWeight: 600, color: c.abonnementMensuel > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
-                                                                    {c.abonnementMensuel > 0 ? `${formatMontant(c.abonnementMensuel)}/m` : '—'}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Sélecteur rapide pour changer de colonne */}
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }} onClick={(e) => e.stopPropagation()}>
-                                                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Déplacer :</span>
-                                                            <select
-                                                                className="form-select"
-                                                                style={{ fontSize: 11, padding: '2px 6px', height: 'auto', maxWidth: 140 }}
-                                                                value={c.siteStatut}
-                                                                onChange={(e) => changerStatutSite(c.id, e.target.value)}
-                                                            >
-                                                                {SITE_STATUTS.map((st) => (
-                                                                    <option key={st.id} value={st.id}>{st.label}</option>
-                                                                ))}
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })
-                    ) : (
-                        // Kanban groupé par Catégorie
-                        [...categories, { id: '__none__', nom: 'Non catégorisé', couleur: '#6b7280' }].map((cat) => {
-                            const columnClients = filtered.filter((c) =>
-                                cat.id === '__none__' ? !c.categorieId : c.categorieId === cat.id
-                            );
-                            const caColonne = columnClients.reduce((s, c) => s + (c.totalFacture || c.totalEncaisse || 0), 0);
-
-                            return (
-                                <div key={cat.id} className="kanban-column">
-                                    <div className="kanban-column-header">
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: cat.couleur }} />
-                                            <span style={{ fontWeight: 600, fontSize: 13 }}>{cat.nom}</span>
-                                            <span className="badge badge--muted" style={{ fontSize: 11 }}>{columnClients.length}</span>
-                                        </div>
-                                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>
-                                            {formatMontant(caColonne)}
-                                        </div>
-                                    </div>
-
-                                    <div className="kanban-column-body">
-                                        {columnClients.length === 0 ? (
-                                            <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-                                                Aucun client
-                                            </div>
-                                        ) : (
-                                            columnClients.map((c) => {
-                                                const siteStatut = getStatutClient(c.siteStatut);
-
-                                                return (
-                                                    <div
-                                                        key={c.id}
-                                                        className="kanban-card"
-                                                        onClick={() => navigate(`/clients/${c.id}`)}
-                                                    >
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                                                            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>
-                                                                {c.nom}
-                                                            </div>
-                                                            <span
-                                                                className="badge"
-                                                                style={{
-                                                                    fontSize: 10,
-                                                                    background: siteStatut.bg,
-                                                                    color: siteStatut.color,
-                                                                    border: `1px solid ${siteStatut.color}44`,
-                                                                }}
-                                                            >
-                                                                {siteStatut.label}
-                                                            </span>
-                                                        </div>
-
-                                                        {c.siteUrl && (
-                                                            <a
-                                                                href={c.siteUrl.startsWith('http') ? c.siteUrl : `https://${c.siteUrl}`}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500 }}
-                                                                onClick={(e) => e.stopPropagation()}
-                                                            >
-                                                                {c.siteUrl.replace(/^https?:\/\//, '')} [↗]
-                                                            </a>
-                                                        )}
-
-                                                        <div className="kanban-card-metrics">
-                                                            <div>
-                                                                <div style={{ color: 'var(--text-muted)' }}>Facturé</div>
-                                                                <div style={{ fontWeight: 600 }}>{formatMontant(c.totalFacture)}</div>
-                                                            </div>
-                                                            <div>
-                                                                <div style={{ color: 'var(--text-muted)' }}>Marge</div>
-                                                                <div style={{ fontWeight: 700, color: c.margeNette >= 0 ? 'var(--success)' : 'var(--danger)' }}>
-                                                                    {formatMontant(c.margeNette)}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Déplacer de catégorie */}
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }} onClick={(e) => e.stopPropagation()}>
-                                                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Catégorie :</span>
-                                                            <select
-                                                                className="form-select"
-                                                                style={{ fontSize: 11, padding: '2px 6px', height: 'auto', maxWidth: 140 }}
-                                                                value={c.categorieId ?? ''}
-                                                                onChange={(e) => changerCategorie(c.id, e.target.value)}
-                                                            >
-                                                                <option value="">Non catégorisé</option>
-                                                                {categories.map((item) => (
-                                                                    <option key={item.id} value={item.id}>{item.nom}</option>
-                                                                ))}
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                );
                                             })
                                         )}
                                     </div>
@@ -1021,6 +895,7 @@ export default function Clients() {
                                         <th>Client & Site</th>
                                         <th>Catégorie</th>
                                         <th style={{ textAlign: 'right' }}>Total Facturé</th>
+                                        <th style={{ textAlign: 'right' }}>MRR / mois</th>
                                         <th style={{ textAlign: 'right' }}>Dépenses</th>
                                         <th style={{ textAlign: 'right' }}>Marge Nette</th>
                                         <th style={{ width: 160 }}>Taux de marge</th>
@@ -1031,7 +906,7 @@ export default function Clients() {
                                 <tbody>
                                     {rentabiliteClients.length === 0 ? (
                                         <tr>
-                                            <td colSpan={9} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
+                                            <td colSpan={10} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
                                                 Aucun client dans ce filtre de rentabilité.
                                             </td>
                                         </tr>
@@ -1095,6 +970,9 @@ export default function Clients() {
                                                     </td>
                                                     <td style={{ textAlign: 'right', fontWeight: 600 }}>
                                                         {formatMontant(c.totalFacture)}
+                                                    </td>
+                                                    <td style={{ textAlign: 'right', fontWeight: 600, color: c.abonnementMensuel > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
+                                                        {c.abonnementMensuel > 0 ? `${formatMontant(c.abonnementMensuel)} /m` : '—'}
                                                     </td>
                                                     <td style={{ textAlign: 'right', color: c.totalDepenses > 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
                                                         {c.totalDepenses > 0 ? `− ${formatMontant(c.totalDepenses)}` : '—'}
@@ -1315,6 +1193,17 @@ export default function Clients() {
                         </form>
                     </div>
                 </div>
+            )}
+
+            {/* ─── Modale de disponibilités et réservation rapide (Appel) ─── */}
+            {showQuickAvailModal && (
+                <ModalQuickAvailability
+                    clients={clients}
+                    onClose={() => setShowQuickAvailModal(false)}
+                    onRdvBooked={() => {
+                        load();
+                    }}
+                />
             )}
         </div>
     );

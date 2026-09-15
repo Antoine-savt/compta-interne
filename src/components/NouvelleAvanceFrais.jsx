@@ -19,9 +19,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant } from '../services/helpers';
+import { formatMontant, toISODate } from '../services/helpers';
 import { FileUpload } from './FileUpload';
 import { Tooltip } from './Shared';
+import { DateInput } from './common/DateInput';
 
 export function NouvelleAvanceFrais({ onCreated }) {
     const [searchParams] = useSearchParams();
@@ -32,7 +33,7 @@ export function NouvelleAvanceFrais({ onCreated }) {
     const [categorieId, setCategorieId] = useState('');
     const [description, setDescription] = useState('');
     const [montant, setMontant] = useState('');
-    const [dateAvance, setDateAvance] = useState(new Date().toISOString().split('T')[0]);
+    const [dateAvance, setDateAvance] = useState(toISODate(new Date()));
     const [dejaRembourse, setDejaRembourse] = useState(false);
     const [documentIds, setDocumentIds] = useState([]);
     const [saving, setSaving] = useState(false);
@@ -200,7 +201,7 @@ export function NouvelleAvanceFrais({ onCreated }) {
                 </div>
                 <div className="form-group">
                     <label className="form-label">Date de l'avance</label>
-                    <input type="date" className="form-input" style={{ maxWidth: 200 }} value={dateAvance} onChange={(e) => setDateAvance(e.target.value)} required />
+                    <DateInput className="form-input" style={{ maxWidth: 200 }} value={dateAvance} onChange={(e) => setDateAvance(e.target.value)} required />
                 </div>
 
                 {/* Toggle remboursement immédiat */}
