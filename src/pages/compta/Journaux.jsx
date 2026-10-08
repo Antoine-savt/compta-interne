@@ -10,9 +10,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getEcrituresActives, genererFEC, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate, toISODate } from '../../services/helpers';
 import { DateInput } from '../../components/common/DateInput';
+import { ModalModifierOperation } from '../../components/ModalModifierOperation';
 
 const JOURNAUX = [
     { code: '', label: 'Tous les journaux' },
+    { code: 'VT', label: 'VT — Journal des Ventes (facturation)' },
     { code: 'VE', label: 'VE — Journal des Ventes' },
     { code: 'AC', label: 'AC — Journal des Achats' },
     { code: 'BQ', label: 'BQ — Journal de Banque' },
@@ -27,13 +29,14 @@ export default function Journaux() {
     const [ecritures, setEcritures] = useState([]);
     const [loading, setLoading] = useState(() => !hasEcrituresCache());
     const [siren, setSiren] = useState('123456789');
+    const [selectedEcritureId, setSelectedEcritureId] = useState(null);
 
-    const loadData = useCallback(async () => {
+    const loadData = useCallback(async (forceRefresh = false) => {
         if (!hasEcrituresCache()) {
             setLoading(true);
         }
         try {
-            const data = await getEcrituresActives({ dateDebut, dateFin, journal: codeJournal || undefined });
+            const data = await getEcrituresActives({ dateDebut, dateFin, journal: codeJournal || undefined }, { forceRefresh });
             setEcritures(data);
         } catch (err) {
             console.error('Erreur chargement écritures:', err);
@@ -169,8 +172,15 @@ export default function Journaux() {
                                         <span style={{ fontSize: 13, fontWeight: 500 }}>{ec.libelle}</span>
                                         {ec.pieceRef && <code style={{ fontSize: 11 }}>Réf: {ec.pieceRef}</code>}
                                     </div>
-                                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                                        ID : <code>{ec.id.slice(0, 8)}...</code>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+                                        <span>ID : <code>{ec.id.slice(0, 8)}...</code></span>
+                                        <button
+                                            type="button"
+                                            className="btn btn--sm btn--ghost no-print"
+                                            onClick={() => setSelectedEcritureId(ec.id)}
+                                        >
+                                            Modifier
+                                        </button>
                                     </div>
                                 </div>
 
@@ -218,6 +228,17 @@ export default function Journaux() {
                         );
                     })}
                 </div>
+            )}
+
+            {selectedEcritureId && (
+                <ModalModifierOperation
+                    ecritureId={selectedEcritureId}
+                    onClose={() => setSelectedEcritureId(null)}
+                    onSaved={() => {
+                        setSelectedEcritureId(null);
+                        loadData(true);
+                    }}
+                />
             )}
         </div>
     );

@@ -560,6 +560,7 @@ export function genererFEC(ecritures, siren = '000000000', annee = new Date().ge
     ];
 
     const NOMS_JOURNAUX = {
+        VT: 'Journal des Ventes',
         VE: 'Journal des Ventes',
         AC: 'Journal des Achats',
         BQ: 'Journal de Banque',

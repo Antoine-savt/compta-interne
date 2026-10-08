@@ -19,14 +19,14 @@ import { formatMontant, formatDate, toISODate } from '../services/helpers';
 import { FileUpload } from './FileUpload';
 import { DateInput } from './common/DateInput';
 
-const RECURRENCES = [
+export const RECURRENCES = [
     { value: 'unique', label: 'Ponctuel (une fois)', coefMRR: 0 },
     { value: 'mensuel', label: 'Mensuel', coefMRR: 1 },
     { value: 'trimestriel', label: 'Trimestriel', coefMRR: 1 / 3 },
     { value: 'annuel', label: 'Annuel', coefMRR: 1 / 12 },
 ];
 
-const MODES_PAIEMENT = [
+export const MODES_PAIEMENT = [
     { value: 'stripe', label: 'Stripe / Prélèvement en ligne' },
     { value: 'virement', label: 'Virement bancaire' },
     { value: 'cb', label: 'Carte bancaire' },
@@ -43,7 +43,7 @@ const LIGNE_VIDE = (defaultDate = '') => ({
     recurrence: 'mensuel',
 });
 
-function computeTotaux(lignes) {
+export function computeTotaux(lignes) {
     let totalOneShot = 0;
     let mrr = 0;
     for (const l of lignes) {
@@ -81,6 +81,7 @@ export function FacturationClient() {
     const [virementRecu, setVirementRecu] = useState(true); // L'argent a-t-il été viré de Stripe vers le compte bancaire
     const [dateVirementStripe, setDateVirementStripe] = useState(todayStr); // Date du virement de Stripe vers le compte
     const [montantRecuManuel, setMontantRecuManuel] = useState('');
+    const [fraisTransaction, setFraisTransaction] = useState('');
     const [stripe, setStripe] = useState({ brut: '', frais: '', net: '' });
 
     // Pièces justificatives
@@ -141,6 +142,11 @@ export function FacturationClient() {
         if (b && f >= 0) setStripe((s) => ({ ...s, net: (b - f).toFixed(2) }));
     }, [stripe.brut, stripe.frais]);
 
+    // Règlement hors Stripe : montant payé par le client, frais de transaction et net reçu en banque
+    const reglementBrut = parseFloat(montantRecuManuel) || totalFacture;
+    const reglementFrais = parseFloat(fraisTransaction) || 0;
+    const reglementNet = +(reglementBrut - reglementFrais).toFixed(2);
+
     // Pré-remplir le montant brut si Stripe activé
     useEffect(() => {
         if (withPayment && modePaiement === 'stripe' && totalFacture > 0 && !stripe.brut) {
@@ -157,6 +163,10 @@ export function FacturationClient() {
 
         if (withPayment) {
             if (!datePaiement) { setError('Veuillez renseigner la date à laquelle le client a payé.'); return; }
+            if (modePaiement !== 'stripe' && (reglementFrais < 0 || reglementNet <= 0)) {
+                setError('Les frais de transaction doivent être positifs et inférieurs au montant payé.');
+                return;
+            }
             if (modePaiement === 'stripe') {
                 if (!strapeBrut) { setError('Saisissez le montant brut Stripe.'); return; }
                 if (virementRecu && !dateVirementStripe) {
@@ -206,16 +216,20 @@ export function FacturationClient() {
                         ecriturePaiementId = res.ecritureId;
                     }
                 } else {
-                    const montantEncaisse = parseFloat(montantRecuManuel) || totalFacture;
+                    // Le client est soldé du montant qu'il a payé ; les frais de transaction sont une charge (627)
+                    const mouvements = [
+                        { compte: '512', libelle: 'Banque', debit: reglementNet, credit: 0 },
+                        ...(reglementFrais > 0
+                            ? [{ compte: '627', libelle: `Frais de transaction (${modePaiement})`, debit: reglementFrais, credit: 0 }]
+                            : []),
+                        { compte: '411', libelle: clientSelectionne?.nom || 'Clients', debit: 0, credit: reglementBrut },
+                    ];
                     const res = await ecrireEcriture({
                         journal: 'BQ',
                         date: datePaiement || date,
                         libelle: `Règlement reçu (${modePaiement}) — ${libelle}`,
                         sourceType: 'facturation',
-                        mouvements: [
-                            { compte: '512', libelle: 'Banque', debit: montantEncaisse, credit: 0 },
-                            { compte: '411', libelle: clientSelectionne?.nom || 'Clients', debit: 0, credit: montantEncaisse },
-                        ],
+                        mouvements,
                     });
                     ecriturePaiementId = res.ecritureId;
                 }
@@ -256,6 +270,9 @@ export function FacturationClient() {
                 withStripe: withPayment && modePaiement === 'stripe',
                 stripe: (withPayment && modePaiement === 'stripe')
                     ? { brut: strapeBrut, frais: stripeFrags, net: stripeNet }
+                    : null,
+                reglement: (withPayment && modePaiement !== 'stripe')
+                    ? { brut: reglementBrut, frais: reglementFrais, net: reglementNet }
                     : null,
                 ecritureFactId,
                 ecritureStripeId: ecriturePaiementId,
@@ -328,6 +345,8 @@ export function FacturationClient() {
                     setDocumentIds([]);
                     setWithPayment(false);
                     setVirementRecu(true);
+                    setMontantRecuManuel('');
+                    setFraisTransaction('');
                 }}
             >
                 Nouvelle facturation
@@ -627,18 +646,37 @@ export function FacturationClient() {
                                         </select>
                                     </div>
                                 </div>
-                                <div className="form-group" style={{ maxWidth: 300 }}>
-                                    <label className="form-label">Montant net encaissé (€)</label>
-                                    <input
-                                        type="number"
-                                        min="0.01"
-                                        step="0.01"
-                                        className="form-input"
-                                        placeholder={totalFacture ? totalFacture.toFixed(2) : '0.00'}
-                                        value={montantRecuManuel}
-                                        onChange={(e) => setMontantRecuManuel(e.target.value)}
-                                    />
-                                    <span className="form-hint">Par défaut le total de la facture ({formatMontant(totalFacture)}).</span>
+                                <div className="form-row form-row--3">
+                                    <div className="form-group" style={{ marginBottom: 0 }}>
+                                        <label className="form-label">Montant payé par le client (€)</label>
+                                        <input
+                                            type="number"
+                                            min="0.01"
+                                            step="0.01"
+                                            className="form-input"
+                                            placeholder={totalFacture ? totalFacture.toFixed(2) : '0.00'}
+                                            value={montantRecuManuel}
+                                            onChange={(e) => setMontantRecuManuel(e.target.value)}
+                                        />
+                                        <span className="form-hint">Par défaut le total de la facture ({formatMontant(totalFacture)}).</span>
+                                    </div>
+                                    <div className="form-group" style={{ marginBottom: 0 }}>
+                                        <label className="form-label">Frais de transaction (€)</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            className="form-input"
+                                            placeholder="0.00"
+                                            value={fraisTransaction}
+                                            onChange={(e) => setFraisTransaction(e.target.value)}
+                                        />
+                                        <span className="form-hint">Commission TPE, SumUp, PayPal... (compte 627).</span>
+                                    </div>
+                                    <div className="form-group" style={{ marginBottom: 0 }}>
+                                        <label className="form-label">Net reçu sur le compte (€)</label>
+                                        <input type="text" className="form-input" value={formatMontant(reglementNet)} readOnly />
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -721,18 +759,26 @@ export function FacturationClient() {
                                         ) : (
                                             <>
                                                 <tr style={{ borderTop: '2px dashed var(--border)' }}>
-                                                    <td rowSpan={2} style={{ fontSize: 12 }}>{formatDate(datePaiement || date)}</td>
-                                                    <td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
+                                                    <td rowSpan={reglementFrais > 0 ? 3 : 2} style={{ fontSize: 12 }}>{formatDate(datePaiement || date)}</td>
+                                                    <td rowSpan={reglementFrais > 0 ? 3 : 2} style={{ fontWeight: 600, fontSize: 11 }}>BQ</td>
                                                     <td><code>512</code></td>
                                                     <td>Banque</td>
-                                                    <td style={{ textAlign: 'right' }}>{formatMontant(parseFloat(montantRecuManuel) || totalFacture)}</td>
+                                                    <td style={{ textAlign: 'right' }}>{formatMontant(reglementNet)}</td>
                                                     <td style={{ textAlign: 'right' }}>—</td>
                                                 </tr>
+                                                {reglementFrais > 0 && (
+                                                    <tr>
+                                                        <td><code>627</code></td>
+                                                        <td>Frais de transaction</td>
+                                                        <td style={{ textAlign: 'right' }}>{formatMontant(reglementFrais)}</td>
+                                                        <td style={{ textAlign: 'right' }}>—</td>
+                                                    </tr>
+                                                )}
                                                 <tr>
                                                     <td><code>411</code></td>
                                                     <td>Clients</td>
                                                     <td style={{ textAlign: 'right' }}>—</td>
-                                                    <td style={{ textAlign: 'right' }}>{formatMontant(parseFloat(montantRecuManuel) || totalFacture)}</td>
+                                                    <td style={{ textAlign: 'right' }}>{formatMontant(reglementBrut)}</td>
                                                 </tr>
                                             </>
                                         )}

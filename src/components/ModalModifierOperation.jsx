@@ -32,9 +32,22 @@ import {
 import { db } from '../firebase';
 import { invalidateEcrituresCache } from '../services/comptaService';
 import { invalidateCache } from '../services/dataCache';
-import { formatMontant, formatDate, calculerTTCdepuisHT } from '../services/helpers';
+import { formatMontant, formatDate, calculerTTCdepuisHT, toISODate } from '../services/helpers';
 import { FileUpload } from './FileUpload';
 import { DateInput } from './common/DateInput';
+import { RECURRENCES, MODES_PAIEMENT, computeTotaux } from './FacturationClient';
+
+// Types d'opérations disposant d'un formulaire métier dédié ; tout le reste s'édite en écriture générale
+const TYPES_METIER = ['depense', 'cca', 'capital_initial', 'facture'];
+
+const nouvelleLigneFacture = (dateDebut) => ({
+    id: Date.now() + Math.random(),
+    description: '',
+    dateDebut,
+    quantite: 1,
+    prixUnitaire: '',
+    recurrence: 'unique',
+});
 
 const CATEGORIES_DEPENSES = [
     { id: 'saas', label: 'Logiciels & SaaS', compte: '6135' },
@@ -102,12 +115,20 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
     const [facClientId, setFacClientId] = useState('');
     const [facClientNom, setFacClientNom] = useState('');
     const [facDate, setFacDate] = useState('');
-    const [facDescription, setFacDescription] = useState('');
-    const [facMontantHT, setFacMontantHT] = useState('');
+    const [facLignes, setFacLignes] = useState([]);
+    const [facNotes, setFacNotes] = useState('');
     const [facTvaOn, setFacTvaOn] = useState(false);
     const [facTauxTVA, setFacTauxTVA] = useState(20);
-    const [facStatut, setFacStatut] = useState('encaissee');
-    const [facDateEnc, setFacDateEnc] = useState('');
+    // Encaissement de la facture
+    const [facWithPayment, setFacWithPayment] = useState(false);
+    const [facModePaiement, setFacModePaiement] = useState('virement');
+    const [facDatePaiement, setFacDatePaiement] = useState('');
+    const [facVirementRecu, setFacVirementRecu] = useState(true);
+    const [facDateVirement, setFacDateVirement] = useState('');
+    const [facPayeBrut, setFacPayeBrut] = useState('');
+    const [facPayeFrais, setFacPayeFrais] = useState('');
+    const [facEcPaiementId, setFacEcPaiementId] = useState(null);
+    const [facEcFactId, setFacEcFactId] = useState(null);
 
     // ─── État Formulaire ÉCRITURE GÉNÉRALE (OD / autre) ───
     const [genDate, setGenDate] = useState('');
@@ -160,11 +181,23 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                 }
             }
 
-            if (sType?.startsWith('cca')) {
+            if (sType === 'cca_apport' || sType === 'cca_remboursement') {
                 sType = 'cca';
             }
             if (sType === 'facturation') {
                 sType = 'facture';
+            }
+            // Intérêts CCA, dividendes, avances de frais, versements, contre-passations...
+            if (sType && !TYPES_METIER.includes(sType)) {
+                sType = 'od';
+            }
+
+            // Pré-remplir l'édition directe de l'écriture (mode OD ou mode avancé)
+            if (ecData) {
+                setGenDate(toISODate(ecData.date));
+                setGenLibelle(ecData.libelle || '');
+                setGenPieceRef(ecData.pieceRef || '');
+                setGenMouvements(ecData.mouvements || []);
             }
 
             setOperationType(sType || 'depense');
@@ -177,9 +210,11 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     const dSnap = await getDoc(doc(db, 'depenses', sId));
                     if (dSnap.exists()) depData = { id: dSnap.id, ...dSnap.data() };
                 } else if (ecritureId) {
-                    // Trouver la dépense qui référence cette écriture
-                    const qDep = query(collection(db, 'depenses'), where('ecritureDepenseIds', 'array-contains', ecritureId));
-                    const qSnap = await getDocs(qDep);
+                    // Trouver la dépense qui référence cette écriture (achat AC ou paiement BQ)
+                    let qSnap = await getDocs(query(collection(db, 'depenses'), where('ecritureDepenseIds', 'array-contains', ecritureId)));
+                    if (qSnap.empty) {
+                        qSnap = await getDocs(query(collection(db, 'depenses'), where('ecriturePaiementIds', 'array-contains', ecritureId)));
+                    }
                     if (!qSnap.empty) {
                         depData = { id: qSnap.docs[0].id, ...qSnap.docs[0].data() };
                         setActualSourceId(depData.id);
@@ -260,34 +295,81 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     if (!fSnap.exists()) fSnap = await getDoc(doc(db, 'facturations', sId));
                     if (fSnap.exists()) fData = { id: fSnap.id, ...fSnap.data() };
                 } else if (ecData?.id) {
-                    const qF1 = query(collection(db, 'facturations'), where('ecritureFactId', '==', ecData.id));
-                    const qS1 = await getDocs(qF1);
-                    if (!qS1.empty) {
-                        fData = { id: qS1.docs[0].id, ...qS1.docs[0].data() };
-                        setActualSourceId(fData.id);
+                    // L'écriture peut être la vente (VT) ou l'encaissement (BQ) de la facturation
+                    for (const champ of ['ecritureFactId', 'ecriturePaiementId', 'ecritureStripeId']) {
+                        const qS = await getDocs(query(collection(db, 'facturations'), where(champ, '==', ecData.id)));
+                        if (!qS.empty) {
+                            fData = { id: qS.docs[0].id, ...qS.docs[0].data() };
+                            setActualSourceId(fData.id);
+                            break;
+                        }
                     }
                 }
+
+                const estEcritureBQ = ecData?.journal === 'BQ';
+                const ecFactId = fData?.ecritureFactId || (ecData && !estEcritureBQ ? ecData.id : null);
+                const ecPayId = fData?.ecriturePaiementId || fData?.ecritureStripeId || (estEcritureBQ ? ecData.id : null);
+                setFacEcFactId(ecFactId);
+                setFacEcPaiementId(ecPayId);
+
+                // Écriture d'encaissement : source de vérité pour brut / frais
+                let ecPay = null;
+                if (ecPayId) {
+                    const pSnap = ecPayId === ecData?.id ? null : await getDoc(doc(db, 'ecritures', ecPayId));
+                    ecPay = pSnap ? (pSnap.exists() ? { id: pSnap.id, ...pSnap.data() } : null) : ecData;
+                    if (ecPay?.statut && ecPay.statut !== 'active') ecPay = null;
+                }
+
                 if (fData) {
                     setSourceData(fData);
                     setFacClientId(fData.clientId || '');
                     setFacClientNom(fData.clientNom || '');
-                    const rawDate = fData.date?.toDate ? fData.date.toDate() : new Date(fData.date || fData.dateFacturation || Date.now());
-                    setFacDate(!isNaN(rawDate) ? rawDate.toISOString().split('T')[0] : '');
-                    setFacDescription(fData.description || fData.lignes?.map((l) => l.description).join(', ') || '');
-                    setFacMontantHT(fData.totalHT ? String(fData.totalHT) : String(fData.totalFacture || fData.totalTTC || ''));
+                    const dateFact = toISODate(fData.dateFacturation || fData.date);
+                    setFacDate(dateFact);
+                    setFacNotes(fData.notes || '');
+                    const montantBase = fData.totalHT ?? fData.totalFacture ?? fData.totalTTC ?? '';
+                    setFacLignes(
+                        fData.lignes?.length
+                            ? fData.lignes.map((l, i) => ({
+                                id: i + Math.random(),
+                                description: l.description || '',
+                                dateDebut: toISODate(l.dateDebut) || dateFact,
+                                quantite: l.quantite ?? 1,
+                                prixUnitaire: l.prixUnitaire != null ? String(l.prixUnitaire) : '',
+                                recurrence: l.recurrence || 'unique',
+                            }))
+                            : [{ ...nouvelleLigneFacture(dateFact), description: fData.description || '', prixUnitaire: String(montantBase) }]
+                    );
                     setFacTvaOn(!!fData.tvaActive);
                     setFacTauxTVA(fData.tauxTVA || 20);
-                    setFacStatut(fData.statut || 'encaissee');
                     setDocumentIds(fData.documentIds || []);
+
+                    const mode = fData.modePaiement || (fData.withStripe ? 'stripe' : 'virement');
+                    setFacWithPayment(!!(fData.withPayment || ecPay));
+                    setFacModePaiement(mode);
+                    setFacDatePaiement(toISODate(fData.datePaiementStr || fData.datePaiement) || toISODate(ecPay?.date) || dateFact);
+                    setFacVirementRecu(mode !== 'stripe' || fData.virementRecu !== false || !!ecPay);
+                    setFacDateVirement(toISODate(fData.dateVirementStripeStr || fData.dateVirementStripe) || toISODate(ecPay?.date) || dateFact);
+                } else if (ecData) {
+                    // Écriture de vente orpheline : on reconstruit une ligne depuis le compte 706
+                    setFacDate(toISODate(ecData.date));
+                    const mvt411 = ecData.mouvements?.find((m) => m.compte === '411');
+                    setFacClientNom(mvt411?.libelle?.replace(/^Client /, '') || '');
+                    const mvt706 = ecData.mouvements?.find((m) => m.compte?.startsWith('70'));
+                    setFacLignes([{ ...nouvelleLigneFacture(toISODate(ecData.date)), description: ecData.libelle || '', prixUnitaire: String(mvt706?.credit || mvt411?.debit || '') }]);
                 }
-            } else {
-                // Écriture générale
-                if (ecData) {
-                    const ecDate = ecData.date?.toDate ? ecData.date.toDate() : new Date(ecData.date || Date.now());
-                    setGenDate(!isNaN(ecDate) ? ecDate.toISOString().split('T')[0] : '');
-                    setGenLibelle(ecData.libelle || '');
-                    setGenPieceRef(ecData.pieceRef || '');
-                    setGenMouvements(ecData.mouvements || []);
+
+                if (ecPay) {
+                    const mvtClient = ecPay.mouvements?.find((m) => m.compte === '411');
+                    const frais = (ecPay.mouvements || [])
+                        .filter((m) => m.compte?.startsWith('627'))
+                        .reduce((s, m) => s + (+m.debit || 0), 0);
+                    setFacPayeBrut(mvtClient?.credit ? String(mvtClient.credit) : '');
+                    setFacPayeFrais(frais ? String(+frais.toFixed(2)) : '');
+                } else if (fData?.stripe || fData?.reglement) {
+                    const p = fData.stripe || fData.reglement;
+                    setFacPayeBrut(p.brut ? String(p.brut) : '');
+                    setFacPayeFrais(p.frais ? String(p.frais) : '');
                 }
             }
 
@@ -360,7 +442,9 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     ];
 
                 let targetDepId = actualSourceId;
-                let ecDepId = activeEcriture?.id || sourceData?.ecritureDepenseIds?.[0] || null;
+                // Ne jamais réécrire l'écriture de paiement (BQ) avec les mouvements d'achat
+                const ecOuverteEstPaiement = activeEcriture?.journal === 'BQ';
+                let ecDepId = sourceData?.ecritureDepenseIds?.[0] || (ecOuverteEstPaiement ? null : activeEcriture?.id) || null;
 
                 // Si pas d'écriture AC trouvée, on en crée une
                 if (!ecDepId) {
@@ -391,6 +475,9 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
                 // 2. Gestion du paiement (journal BQ)
                 const ecPaiementIds = [...(sourceData?.ecriturePaiementIds || [])];
+                if (ecOuverteEstPaiement && !ecPaiementIds.includes(activeEcriture.id)) {
+                    ecPaiementIds.unshift(activeEcriture.id);
+                }
                 if (depDejaPayee) {
                     const datePaye = depDatePaiement || depDate;
                     const mvtsPaiement = [
@@ -400,6 +487,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
                     if (ecPaiementIds.length > 0) {
                         await updateDoc(doc(db, 'ecritures', ecPaiementIds[0]), {
+                            statut: 'active',
                             date: new Date(datePaye),
                             libelle: `Paiement [${actLabel}] ${categorie.label} — ${depFournisseurNom.trim()}`,
                             mouvements: mvtsPaiement,
@@ -595,17 +683,42 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
                 setSuccessMsg('Capital social et date initiale mis à jour avec succès.');
             } else if (operationType === 'facture') {
-                const montantHTNum = parseFloat(facMontantHT);
-                if (isNaN(montantHTNum) || montantHTNum <= 0) throw new Error('Montant de facture invalide.');
+                const lignesValides = facLignes.filter((l) => l.description.trim() && parseFloat(l.prixUnitaire) > 0);
+                if (!lignesValides.length) throw new Error('Ajoutez au moins une ligne avec description et prix.');
                 if (!facDate) throw new Error('Date de facture requise.');
+
+                const lignesPayload = lignesValides.map((l) => ({
+                    description: l.description.trim(),
+                    dateDebut: l.dateDebut || facDate,
+                    quantite: parseFloat(l.quantite) || 1,
+                    prixUnitaire: parseFloat(l.prixUnitaire),
+                    recurrence: l.recurrence,
+                    total: +((parseFloat(l.prixUnitaire) || 0) * (parseFloat(l.quantite) || 1)).toFixed(2),
+                }));
+                const montantHTNum = +lignesPayload.reduce((s, l) => s + l.total, 0).toFixed(2);
+                const { totalOneShot, mrr } = computeTotaux(lignesValides);
 
                 const { ht, tva, ttc } = facTvaOn
                     ? calculerTTCdepuisHT(montantHTNum, facTauxTVA)
                     : { ht: montantHTNum, tva: 0, ttc: montantHTNum };
 
                 const clientObj = clients.find((c) => c.id === facClientId);
-                const nomClientFinal = clientObj ? clientObj.nom : (facClientNom.trim() || 'Client');
-                const libelleFact = `Facturation — ${nomClientFinal} — ${facDescription.trim() || 'Prestation'}`;
+                const nomClientFinal = clientObj
+                    ? `${clientObj.nom} ${clientObj.prenom ?? ''}`.trim()
+                    : (facClientNom.trim() || 'Client');
+                const libelleFact = `Facturation — ${nomClientFinal}`;
+
+                // Encaissement
+                const estStripe = facModePaiement === 'stripe';
+                const payeBrut = parseFloat(facPayeBrut) || ttc;
+                const payeFrais = parseFloat(facPayeFrais) || 0;
+                const payeNet = +(payeBrut - payeFrais).toFixed(2);
+                const ecritureBanqueRequise = facWithPayment && (!estStripe || facVirementRecu);
+                if (facWithPayment) {
+                    if (!facDatePaiement) throw new Error('La date de paiement du client est requise.');
+                    if (estStripe && facVirementRecu && !facDateVirement) throw new Error('La date du virement Stripe est requise.');
+                    if (payeFrais < 0 || payeNet <= 0) throw new Error('Les frais doivent être positifs et inférieurs au montant payé.');
+                }
 
                 const mvtsVente = facTvaOn && tva > 0
                     ? [
@@ -618,33 +731,102 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                         { compte: '706', libelle: 'Prestations de services', debit: 0, credit: ttc },
                     ];
 
-                let ecId = activeEcriture?.id;
-                let targetFactId = actualSourceId;
+                const targetFactId = actualSourceId;
 
+                // 1. Écriture de vente (VT)
+                let ecId = facEcFactId;
+                const venteFields = {
+                    date: new Date(facDate),
+                    libelle: libelleFact,
+                    mouvements: mvtsVente,
+                    sourceId: targetFactId || null,
+                    sourceType: 'facturation',
+                    statut: 'active',
+                    updatedAt: serverTimestamp(),
+                };
                 if (ecId) {
-                    await updateDoc(doc(db, 'ecritures', ecId), {
-                        date: new Date(facDate),
-                        libelle: libelleFact,
-                        mouvements: mvtsVente,
-                        sourceId: targetFactId || null,
-                        sourceType: 'facturation',
-                        updatedAt: serverTimestamp(),
+                    await updateDoc(doc(db, 'ecritures', ecId), venteFields);
+                } else {
+                    const res = await addDoc(collection(db, 'ecritures'), {
+                        ...venteFields,
+                        journal: 'VT',
+                        pieceRef: 'VT-' + Date.now().toString().slice(-4),
+                        createdAt: serverTimestamp(),
                     });
+                    ecId = res.id;
                 }
 
+                // 2. Écriture d'encaissement (BQ) : banque au net, frais en charge, client soldé du brut
+                let ecPayId = facEcPaiementId;
+                if (ecritureBanqueRequise) {
+                    const compteFrais = estStripe ? '6278' : '627';
+                    const mvtsPaiement = [
+                        { compte: '512', libelle: 'Banque', debit: payeNet, credit: 0 },
+                        ...(payeFrais > 0
+                            ? [{ compte: compteFrais, libelle: estStripe ? 'Frais Stripe' : `Frais de transaction (${facModePaiement})`, debit: payeFrais, credit: 0 }]
+                            : []),
+                        { compte: '411', libelle: nomClientFinal, debit: 0, credit: payeBrut },
+                    ];
+                    const payFields = {
+                        date: new Date(estStripe ? facDateVirement : facDatePaiement),
+                        libelle: estStripe
+                            ? `Virement Stripe vers compte bancaire — ${libelleFact} (payé par client le ${formatDate(facDatePaiement)})`
+                            : `Règlement reçu (${facModePaiement}) — ${libelleFact}`,
+                        mouvements: mvtsPaiement,
+                        sourceId: targetFactId || null,
+                        sourceType: 'facturation',
+                        statut: 'active',
+                        updatedAt: serverTimestamp(),
+                    };
+                    if (ecPayId) {
+                        await updateDoc(doc(db, 'ecritures', ecPayId), payFields);
+                    } else {
+                        const res = await addDoc(collection(db, 'ecritures'), {
+                            ...payFields,
+                            journal: 'BQ',
+                            pieceRef: 'ENC-' + Date.now().toString().slice(-4),
+                            createdAt: serverTimestamp(),
+                        });
+                        ecPayId = res.id;
+                    }
+                } else if (ecPayId) {
+                    // Plus d'encaissement en banque : on annule l'écriture BQ existante
+                    await updateDoc(doc(db, 'ecritures', ecPayId), { statut: 'annulee', updatedAt: serverTimestamp() });
+                    ecPayId = null;
+                }
+
+                // 3. Document de facturation
+                const paiement = facWithPayment ? { brut: payeBrut, frais: payeFrais, net: payeNet } : null;
                 const factPayload = {
                     clientId: facClientId || null,
                     clientNom: nomClientFinal,
                     date: new Date(facDate),
                     dateFacturation: facDate,
-                    description: facDescription.trim(),
+                    lignes: lignesPayload,
+                    description: lignesPayload.map((l) => l.description).join(', '),
+                    notes: facNotes.trim() || null,
+                    totalOneShot,
+                    mrr,
                     totalHT: ht,
                     totalTVA: tva,
                     totalTTC: ttc,
                     totalFacture: ttc,
                     tvaActive: facTvaOn,
                     tauxTVA: facTvaOn ? facTauxTVA : null,
-                    statut: facStatut,
+                    withPayment: facWithPayment,
+                    modePaiement: facWithPayment ? facModePaiement : null,
+                    datePaiement: facWithPayment ? new Date(facDatePaiement) : null,
+                    datePaiementStr: facWithPayment ? facDatePaiement : null,
+                    virementRecu: facWithPayment && estStripe ? facVirementRecu : true,
+                    dateVirementStripe: facWithPayment && estStripe && facVirementRecu ? new Date(facDateVirement) : null,
+                    dateVirementStripeStr: facWithPayment && estStripe && facVirementRecu ? facDateVirement : null,
+                    withStripe: facWithPayment && estStripe,
+                    stripe: facWithPayment && estStripe ? paiement : null,
+                    reglement: facWithPayment && !estStripe ? paiement : null,
+                    statut: facWithPayment ? (estStripe && !facVirementRecu ? 'payee_stripe' : 'encaissee') : 'en_attente',
+                    ecritureFactId: ecId,
+                    ecriturePaiementId: ecPayId,
+                    ecritureStripeId: ecPayId,
                     documentIds,
                     updatedAt: serverTimestamp(),
                 };
@@ -673,6 +855,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
             } else if (operationType === 'od' || !sourceData) {
                 // Écriture générale modifiée directement
                 if (!activeEcriture?.id) throw new Error('Aucune écriture sélectionnée.');
+                if (!genDate) throw new Error('La date de l\'écriture est requise.');
                 const dTot = genMouvements.reduce((s, m) => s + (parseFloat(m.debit) || 0), 0);
                 const cTot = genMouvements.reduce((s, m) => s + (parseFloat(m.credit) || 0), 0);
 
@@ -684,11 +867,14 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     date: new Date(genDate),
                     libelle: genLibelle.trim(),
                     pieceRef: genPieceRef.trim(),
-                    mouvements: genMouvements.map((m) => ({
-                        ...m,
-                        debit: parseFloat(m.debit) || 0,
-                        credit: parseFloat(m.credit) || 0,
-                    })),
+                    mouvements: genMouvements
+                        .filter((m) => String(m.compte || '').trim())
+                        .map((m) => ({
+                            ...m,
+                            compte: String(m.compte).trim(),
+                            debit: parseFloat(m.debit) || 0,
+                            credit: parseFloat(m.credit) || 0,
+                        })),
                     updatedAt: serverTimestamp(),
                 });
                 setSuccessMsg('Écriture comptable mise à jour avec succès.');
@@ -723,13 +909,19 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                 await deleteDoc(doc(db, 'ccaMouvements', actualSourceId));
                 invalidateCache('ccaMouvements');
             } else if (operationType === 'facture' && actualSourceId) {
-                await deleteDoc(doc(db, 'factures', actualSourceId));
+                const refFacturation = doc(db, 'facturations', actualSourceId);
+                const snapFacturation = await getDoc(refFacturation);
+                await deleteDoc(snapFacturation.exists() ? refFacturation : doc(db, 'factures', actualSourceId));
                 invalidateCache('factures');
+                invalidateCache('facturations');
             }
 
             // 2. Supprimer ou marquer annulées les écritures comptables
             const ecrituresToDelete = new Set();
             if (activeEcriture?.id) ecrituresToDelete.add(activeEcriture.id);
+            if (operationType === 'facture') {
+                [facEcFactId, facEcPaiementId].filter(Boolean).forEach((id) => ecrituresToDelete.add(id));
+            }
             if (sourceData?.ecritureDepenseIds) sourceData.ecritureDepenseIds.forEach((id) => ecrituresToDelete.add(id));
             if (sourceData?.ecriturePaiementIds) sourceData.ecriturePaiementIds.forEach((id) => ecrituresToDelete.add(id));
             if (sourceData?.ecritureId) ecrituresToDelete.add(sourceData.ecritureId);
@@ -754,6 +946,15 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
             setError('Erreur lors de la suppression : ' + err.message);
             setSaving(false);
         }
+    }
+
+    // Aperçu live de la facture en cours de modification
+    const facTotalHT = facLignes.reduce((s, l) => s + (parseFloat(l.prixUnitaire) || 0) * (parseFloat(l.quantite) || 1), 0);
+    const facTotalTTC = facTvaOn ? calculerTTCdepuisHT(+facTotalHT.toFixed(2), facTauxTVA).ttc : facTotalHT;
+    const facNetRecu = (parseFloat(facPayeBrut) || facTotalTTC) - (parseFloat(facPayeFrais) || 0);
+
+    function updateFacLigne(id, field, value) {
+        setFacLignes((prev) => prev.map((l) => (l.id === id ? { ...l, [field]: value } : l)));
     }
 
     return (
@@ -1138,6 +1339,236 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                 </div>
                             )}
 
+                            {/* ─── FORMULAIRE FACTURE CLIENT ─── */}
+                            {operationType === 'facture' && (
+                                <div>
+                                    <div className="form-row--2">
+                                        <div className="form-group">
+                                            <label className="form-label">Client</label>
+                                            <select
+                                                className="form-select"
+                                                value={facClientId}
+                                                onChange={(e) => setFacClientId(e.target.value)}
+                                            >
+                                                <option value="">Client libre (saisir le nom ci-dessous)</option>
+                                                {[...clients].sort((a, b) => (a.nom || '').localeCompare(b.nom || '')).map((c) => (
+                                                    <option key={c.id} value={c.id}>{`${c.nom} ${c.prenom ?? ''}`.trim()}</option>
+                                                ))}
+                                            </select>
+                                            {!facClientId && (
+                                                <input
+                                                    type="text"
+                                                    className="form-input"
+                                                    style={{ marginTop: 6 }}
+                                                    value={facClientNom}
+                                                    onChange={(e) => setFacClientNom(e.target.value)}
+                                                    placeholder="Nom du client"
+                                                />
+                                            )}
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">Date d'émission de la facture *</label>
+                                            <DateInput
+                                                className="form-input"
+                                                value={facDate}
+                                                onChange={(e) => setFacDate(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Lignes */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 130px 55px 95px 120px 32px', gap: 6, fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
+                                            <span>Description</span>
+                                            <span>Début</span>
+                                            <span>Qté</span>
+                                            <span>Prix unit.</span>
+                                            <span>Récurrence</span>
+                                            <span></span>
+                                        </div>
+                                        {facLignes.map((l) => (
+                                            <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '2fr 130px 55px 95px 120px 32px', gap: 6, alignItems: 'center' }}>
+                                                <input
+                                                    type="text"
+                                                    className="form-input"
+                                                    value={l.description}
+                                                    onChange={(e) => updateFacLigne(l.id, 'description', e.target.value)}
+                                                />
+                                                <DateInput
+                                                    className="form-input"
+                                                    style={{ fontSize: 12 }}
+                                                    value={l.dateDebut || facDate}
+                                                    onChange={(e) => updateFacLigne(l.id, 'dateDebut', e.target.value)}
+                                                />
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    step="1"
+                                                    className="form-input"
+                                                    value={l.quantite}
+                                                    onChange={(e) => updateFacLigne(l.id, 'quantite', e.target.value)}
+                                                />
+                                                <input
+                                                    type="number"
+                                                    min="0.01"
+                                                    step="0.01"
+                                                    className="form-input"
+                                                    value={l.prixUnitaire}
+                                                    onChange={(e) => updateFacLigne(l.id, 'prixUnitaire', e.target.value)}
+                                                />
+                                                <select
+                                                    className="form-select"
+                                                    value={l.recurrence}
+                                                    onChange={(e) => updateFacLigne(l.id, 'recurrence', e.target.value)}
+                                                >
+                                                    {RECURRENCES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                                </select>
+                                                <button
+                                                    type="button"
+                                                    className="btn btn--sm btn--ghost"
+                                                    style={{ padding: '2px 8px', color: 'var(--danger)' }}
+                                                    onClick={() => setFacLignes((prev) => prev.filter((x) => x.id !== l.id))}
+                                                    disabled={facLignes.length === 1}
+                                                    title="Supprimer cette ligne"
+                                                >
+                                                    ×
+                                                </button>
+                                            </div>
+                                        ))}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <button
+                                                type="button"
+                                                className="btn btn--sm btn--ghost"
+                                                onClick={() => setFacLignes((prev) => [...prev, nouvelleLigneFacture(facDate)])}
+                                            >
+                                                + Ajouter une ligne
+                                            </button>
+                                            <span style={{ fontSize: 14, fontWeight: 700 }}>
+                                                Total facture : {formatMontant(facTotalTTC)}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="card" style={{ padding: '12px 16px', background: 'var(--bg2)', marginBottom: 16 }}>
+                                        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                                                <input type="checkbox" checked={facTvaOn} onChange={(e) => setFacTvaOn(e.target.checked)} />
+                                                <span style={{ fontWeight: 600 }}>TVA collectée</span>
+                                            </label>
+                                            {facTvaOn && (
+                                                <select
+                                                    className="form-select"
+                                                    style={{ width: 100, padding: '4px 8px' }}
+                                                    value={facTauxTVA}
+                                                    onChange={(e) => setFacTauxTVA(Number(e.target.value))}
+                                                >
+                                                    <option value={20}>20 %</option>
+                                                    <option value={10}>10 %</option>
+                                                    <option value={5.5}>5.5 %</option>
+                                                </select>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Encaissement */}
+                                    <div className="card" style={{ padding: '14px 18px', background: 'var(--bg2)', marginBottom: 16 }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: facWithPayment ? 12 : 0 }}>
+                                            <input type="checkbox" checked={facWithPayment} onChange={(e) => setFacWithPayment(e.target.checked)} />
+                                            <span style={{ fontWeight: 600 }}>Le client a payé</span>
+                                        </label>
+
+                                        {facWithPayment && (
+                                            <div>
+                                                <div className="form-row--2">
+                                                    <div className="form-group">
+                                                        <label className="form-label">Mode de règlement</label>
+                                                        <select
+                                                            className="form-select"
+                                                            value={facModePaiement}
+                                                            onChange={(e) => setFacModePaiement(e.target.value)}
+                                                        >
+                                                            {MODES_PAIEMENT.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div className="form-group">
+                                                        <label className="form-label">Date du paiement par le client *</label>
+                                                        <DateInput
+                                                            className="form-input"
+                                                            value={facDatePaiement}
+                                                            onChange={(e) => setFacDatePaiement(e.target.value)}
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {facModePaiement === 'stripe' && (
+                                                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                                                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                                                            <input type="checkbox" checked={facVirementRecu} onChange={(e) => setFacVirementRecu(e.target.checked)} />
+                                                            <span style={{ fontSize: 13 }}>Virement Stripe reçu sur le compte bancaire</span>
+                                                        </label>
+                                                        {facVirementRecu && (
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                                <span style={{ fontSize: 13 }}>Date du virement :</span>
+                                                                <DateInput
+                                                                    className="form-input"
+                                                                    style={{ width: 150, padding: '4px 8px' }}
+                                                                    value={facDateVirement}
+                                                                    onChange={(e) => setFacDateVirement(e.target.value)}
+                                                                />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                <div className="form-row--3">
+                                                    <div className="form-group" style={{ marginBottom: 0 }}>
+                                                        <label className="form-label">Montant payé par le client (€)</label>
+                                                        <input
+                                                            type="number"
+                                                            min="0.01"
+                                                            step="0.01"
+                                                            className="form-input"
+                                                            placeholder={facTotalTTC.toFixed(2)}
+                                                            value={facPayeBrut}
+                                                            onChange={(e) => setFacPayeBrut(e.target.value)}
+                                                        />
+                                                    </div>
+                                                    <div className="form-group" style={{ marginBottom: 0 }}>
+                                                        <label className="form-label">
+                                                            {facModePaiement === 'stripe' ? 'Frais Stripe (€)' : 'Frais de transaction (€)'}
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            className="form-input"
+                                                            placeholder="0.00"
+                                                            value={facPayeFrais}
+                                                            onChange={(e) => setFacPayeFrais(e.target.value)}
+                                                        />
+                                                    </div>
+                                                    <div className="form-group" style={{ marginBottom: 0 }}>
+                                                        <label className="form-label">Net reçu sur le compte (€)</label>
+                                                        <input type="text" className="form-input" value={formatMontant(facNetRecu)} readOnly />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="form-group">
+                                        <label className="form-label">Notes internes</label>
+                                        <textarea
+                                            className="form-textarea"
+                                            rows={2}
+                                            value={facNotes}
+                                            onChange={(e) => setFacNotes(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
                             {/* ─── FORMULAIRE ÉCRITURE GÉNÉRALE (OD / autre) ─── */}
                             {(operationType === 'od' || operationType === 'autre') && (
                                 <div>
@@ -1183,6 +1614,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                                     <th>Libellé de la ligne</th>
                                                     <th style={{ width: 110, textAlign: 'right' }}>Débit</th>
                                                     <th style={{ width: 110, textAlign: 'right' }}>Crédit</th>
+                                                    <th style={{ width: 40 }}></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -1238,11 +1670,58 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                                                 }}
                                                             />
                                                         </td>
+                                                        <td>
+                                                            <button
+                                                                type="button"
+                                                                className="btn btn--sm btn--ghost"
+                                                                style={{ padding: '2px 8px', color: 'var(--danger)' }}
+                                                                onClick={() => setGenMouvements((prev) => prev.filter((_, i) => i !== idx))}
+                                                                disabled={genMouvements.length <= 2}
+                                                                title="Supprimer cette ligne"
+                                                            >
+                                                                ×
+                                                            </button>
+                                                        </td>
                                                     </tr>
                                                 ))}
                                             </tbody>
+                                            <tfoot>
+                                                <tr style={{ fontSize: 12, fontWeight: 700 }}>
+                                                    <td colSpan={2}>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn--sm btn--ghost"
+                                                            onClick={() => setGenMouvements((prev) => [...prev, { compte: '', libelle: '', debit: 0, credit: 0 }])}
+                                                        >
+                                                            + Ajouter une ligne
+                                                        </button>
+                                                    </td>
+                                                    <td style={{ textAlign: 'right' }}>
+                                                        {formatMontant(genMouvements.reduce((s, m) => s + (parseFloat(m.debit) || 0), 0))}
+                                                    </td>
+                                                    <td style={{ textAlign: 'right' }}>
+                                                        {formatMontant(genMouvements.reduce((s, m) => s + (parseFloat(m.credit) || 0), 0))}
+                                                    </td>
+                                                    <td></td>
+                                                </tr>
+                                            </tfoot>
                                         </table>
                                     </div>
+                                </div>
+                            )}
+
+                            {activeEcriture && TYPES_METIER.includes(operationType) && (
+                                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                                    Besoin de changer un compte ou une ligne précise ?{' '}
+                                    <button
+                                        type="button"
+                                        className="btn btn--sm btn--ghost"
+                                        style={{ fontSize: 12, padding: '2px 8px' }}
+                                        onClick={() => setOperationType('od')}
+                                        title="Modifie uniquement cette écriture, sans mettre à jour la fiche d'origine"
+                                    >
+                                        Éditer directement l'écriture {activeEcriture.journal} (avancé)
+                                    </button>
                                 </div>
                             )}
 
