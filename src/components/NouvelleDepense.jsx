@@ -333,7 +333,13 @@ export function NouvelleDepense({ onCreated }) {
                      TVA déductible
                     <Tooltip text={TOOLTIP_TVA_DEP} />
                 </div>
-                <ToggleSwitch id="tva-dep" label="TVA déductible" checked={tvaOn} onChange={setTvaOn} tooltip={TOOLTIP_TVA_DEP} />
+                {settings.statutTVA === 'redevable' ? (
+                    <ToggleSwitch id="tva-dep" label="TVA déductible" checked={tvaOn} onChange={setTvaOn} tooltip={TOOLTIP_TVA_DEP} />
+                ) : (
+                    <p className="form-hint" style={{ margin: 0 }}>
+                        Franchise en base de TVA (art. 293 B du CGI) : la TVA payée n'est pas récupérable, elle fait partie de la charge (montant TTC).
+                    </p>
+                )}
                 {tvaOn && (
                     <>
                         <div className="form-group" style={{ marginTop: 12 }}>

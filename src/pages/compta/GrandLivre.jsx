@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, calculerGrandLivre, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
+import { getEcrituresAvecANouveaux, ID_A_NOUVEAUX, calculerGrandLivre, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate, toISODate } from '../../services/helpers';
 import { DateInput } from '../../components/common/DateInput';
 import { ModalModifierOperation } from '../../components/ModalModifierOperation';
@@ -32,7 +32,7 @@ export default function GrandLivre() {
             setLoading(true);
         }
         try {
-            const data = await getEcrituresActives({ dateDebut, dateFin, journal: journalFiltre || undefined });
+            const data = await getEcrituresAvecANouveaux({ dateDebut, dateFin, journal: journalFiltre || undefined });
             setEcritures(data);
         } catch (err) {
             console.error('Erreur chargement écritures pour Grand Livre:', err);
@@ -244,7 +244,7 @@ export default function GrandLivre() {
                                         {compte.lignes.map((l, idx) => (
                                             <tr
                                                 key={idx}
-                                                onClick={() => setSelectedEcritureId(l.ecritureId)}
+                                                onClick={() => l.ecritureId !== ID_A_NOUVEAUX && setSelectedEcritureId(l.ecritureId)}
                                                 style={{ cursor: 'pointer', transition: 'background var(--transition)' }}
                                                 className="table-row--interactive"
                                                 title="Cliquer pour voir le détail de l'écriture et ses pièces justificatives"
@@ -284,7 +284,7 @@ export default function GrandLivre() {
                                                         }}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            setSelectedEcritureId(l.ecritureId);
+                                                            if (l.ecritureId !== ID_A_NOUVEAUX) setSelectedEcritureId(l.ecritureId);
                                                         }}
                                                         title="Options (Modifier)"
                                                     >

@@ -237,6 +237,22 @@ export default function CompteResultat() {
                             </div>
                         )}
 
+                        {/* Impôt sur les bénéfices */}
+                        {charges.impots?.length > 0 && (
+                            <div style={{ marginBottom: 16 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 13, borderBottom: '1px solid var(--border)', paddingBottom: 6, marginBottom: 8 }}>
+                                    <span>Impôt sur les bénéfices (69)</span>
+                                    <span>{formatMontant(charges.totalImpots)}</span>
+                                </div>
+                                {charges.impots.map((c) => (
+                                    <div key={c.compte} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
+                                        <span>{detailComptes && <code>{c.compte}</code>} {c.intitule}</span>
+                                        <span style={{ fontWeight: 500 }}>{formatMontant(c.montant)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
                     </div>
 
                     <div style={{ padding: '14px 20px', background: '#fef2f2', borderTop: '2px solid #fecaca', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }} className="print-neutral-footer">

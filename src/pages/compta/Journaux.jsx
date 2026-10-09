@@ -7,13 +7,14 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, genererFEC, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
+import { getEcrituresAvecANouveaux, genererFEC, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate, toISODate } from '../../services/helpers';
 import { DateInput } from '../../components/common/DateInput';
 import { ModalModifierOperation } from '../../components/ModalModifierOperation';
 
 const JOURNAUX = [
     { code: '', label: 'Tous les journaux' },
+    { code: 'AN', label: "AN — À-nouveaux (soldes d'ouverture)" },
     { code: 'VT', label: 'VT — Journal des Ventes (facturation)' },
     { code: 'VE', label: 'VE — Journal des Ventes' },
     { code: 'AC', label: 'AC — Journal des Achats' },
@@ -28,7 +29,7 @@ export default function Journaux() {
     const [codeJournal, setCodeJournal] = useState('');
     const [ecritures, setEcritures] = useState([]);
     const [loading, setLoading] = useState(() => !hasEcrituresCache());
-    const [siren, setSiren] = useState('123456789');
+    const [siren, setSiren] = useState('995071040');
     const [selectedEcritureId, setSelectedEcritureId] = useState(null);
 
     const loadData = useCallback(async (forceRefresh = false) => {
@@ -36,7 +37,7 @@ export default function Journaux() {
             setLoading(true);
         }
         try {
-            const data = await getEcrituresActives({ dateDebut, dateFin, journal: codeJournal || undefined }, { forceRefresh });
+            const data = await getEcrituresAvecANouveaux({ dateDebut, dateFin, journal: codeJournal || undefined }, { forceRefresh });
             setEcritures(data);
         } catch (err) {
             console.error('Erreur chargement écritures:', err);
@@ -53,6 +54,14 @@ export default function Journaux() {
     function handleTelechargerFEC() {
         if (!siren.trim()) {
             alert('Veuillez renseigner le numéro SIREN (9 chiffres) pour le nom du fichier légal.');
+            return;
+        }
+        if (codeJournal) {
+            alert('Le FEC doit contenir tous les journaux : sélectionnez « Tous les journaux » avant de l\'exporter.');
+            return;
+        }
+        const nbBrouillard = ecritures.filter((e) => !e.synthetique && !e.numeroEcriture).length;
+        if (nbBrouillard && !window.confirm(`${nbBrouillard} écriture(s) ne sont pas encore validées : elles auront un numéro provisoire et pas de date de validation.\n\nPour un FEC définitif (contrôle fiscal), validez d'abord la période dans « Clôture de l'exercice ».\n\nExporter quand même ?`)) {
             return;
         }
         const annee = new Date(dateFin).getFullYear();
@@ -168,19 +177,25 @@ export default function Journaux() {
                                 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                         <span className="badge badge--info">Journal {ec.journal}</span>
+                                        {ec.numeroEcriture
+                                            ? <span className="badge badge--success" title="Écriture validée : numéro définitif">N° {ec.numeroEcriture}</span>
+                                            : !ec.synthetique && <span className="badge badge--muted" title="Modifiable tant que la période n'est pas validée">Brouillard</span>}
+                                        {(ec.contrepasseeParId || ec.annuleeParId) && <span className="badge badge--warning">Contre-passée</span>}
                                         <span style={{ fontSize: 12, fontWeight: 600 }}>{formatDate(ec.date)}</span>
                                         <span style={{ fontSize: 13, fontWeight: 500 }}>{ec.libelle}</span>
                                         {ec.pieceRef && <code style={{ fontSize: 11 }}>Réf: {ec.pieceRef}</code>}
                                     </div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--text-muted)' }}>
                                         <span>ID : <code>{ec.id.slice(0, 8)}...</code></span>
-                                        <button
-                                            type="button"
-                                            className="btn btn--sm btn--ghost no-print"
-                                            onClick={() => setSelectedEcritureId(ec.id)}
-                                        >
-                                            Modifier
-                                        </button>
+                                        {!ec.synthetique && (
+                                            <button
+                                                type="button"
+                                                className="btn btn--sm btn--ghost no-print"
+                                                onClick={() => setSelectedEcritureId(ec.id)}
+                                            >
+                                                Modifier
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 

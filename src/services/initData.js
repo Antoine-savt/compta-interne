@@ -40,7 +40,7 @@ const DEFAULT_CATEGORIES = [
         label: 'Cadeaux clients',
         compte: '6234',
         motifObligatoire: false,
-        infoFiscale: "La déductibilité des cadeaux clients est plafonnée fiscalement (69 € TTC par bénéficiaire et par an). Au-delà du plafond, la TVA n'est pas récupérable.",
+        infoFiscale: "TVA récupérable seulement si le cadeau vaut 73 € TTC maximum par bénéficiaire et par an. Pour l'impôt sur les sociétés, les cadeaux restent déductibles s'ils sont dans l'intérêt de l'entreprise ; au-delà de 3 000 € par an, ils doivent être déclarés (relevé des frais généraux).",
         ordre: 5,
     },
 ];
@@ -49,7 +49,7 @@ const DEFAULT_SETTINGS = {
     statutTVA: 'franchise',   // franchise en base par défaut
     tauxTVADefaut: 20,
     journaux: {
-        ventes: 'VE',
+        ventes: 'VT',
         achats: 'AC',
         banque: 'BQ',
         od: 'OD',

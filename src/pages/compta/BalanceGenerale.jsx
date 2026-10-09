@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, calculerBalance, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
+import { getEcrituresAvecANouveaux, calculerBalance, telechargerFichier, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate, toISODate } from '../../services/helpers';
 import { DateInput } from '../../components/common/DateInput';
 
@@ -31,7 +31,7 @@ export default function BalanceGenerale() {
             setLoading(true);
         }
         try {
-            const data = await getEcrituresActives({ dateDebut, dateFin });
+            const data = await getEcrituresAvecANouveaux({ dateDebut, dateFin });
             setEcritures(data);
         } catch (err) {
             console.error('Erreur chargement écritures pour Balance:', err);

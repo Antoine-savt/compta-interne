@@ -10,7 +10,7 @@
 import { useState, useEffect } from 'react';
 import { doc, getDoc, updateDoc, serverTimestamp, getDocs, collection, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
-import { ecrireEcriture } from '../services/api';
+import { ecrireEcriture, modifierEcriture } from '../services/api';
 import { invalidateSettingsCache, formatMontant, formatDate } from '../services/helpers';
 import { invalidateEcrituresCache } from '../services/comptaService';
 import { Tooltip } from '../components/Shared';
@@ -22,7 +22,7 @@ const TOOLTIP_CAPITAL = `Le capital social déposé à la création de la socié
 export default function Reglages() {
     const [statutTVA, setStatutTVA] = useState('franchise');
     const [tauxTVA, setTauxTVA] = useState(20);
-    const [journaux, setJournaux] = useState({ ventes: 'VE', achats: 'AC', banque: 'BQ', od: 'OD' });
+    const [journaux, setJournaux] = useState({ ventes: 'VT', achats: 'AC', banque: 'BQ', od: 'OD' });
     const [categories, setCategories] = useState([]);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
@@ -93,17 +93,19 @@ export default function Reglages() {
             let ecritureId = ecritureCapitalInitialId;
 
             if (ecritureId) {
-                // Mise à jour de l'écriture existante pour préserver la cohérence des dates sans créer de doublon
-                await updateDoc(doc(db, 'ecritures', ecritureId), {
-                    date: new Date(dateCreation),
+                // Modification par le serveur : directe en brouillard, contre-passation si l'écriture est validée
+                const res = await modifierEcriture(ecritureId, {
+                    journal: 'BQ',
+                    date: dateCreation,
                     libelle: `Dépôt du capital social initial — ${banqueDepot.trim() || 'Banque'}`,
                     pieceRef: 'STATUTS',
+                    sourceType: 'capital_initial',
                     mouvements: [
                         { compte: '512', libelle: `Banque — Dépôt capital initial (${banqueDepot})`, debit: montantNum, credit: 0 },
                         { compte: '101', libelle: `Capital social souscrit et libéré`, debit: 0, credit: montantNum },
                     ],
-                    updatedAt: serverTimestamp(),
                 });
+                ecritureId = res.ecritureId;
             } else {
                 // Création de l'écriture équilibrée (Débit 512 / Crédit 101)
                 const res = await ecrireEcriture({

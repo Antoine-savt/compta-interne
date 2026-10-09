@@ -3,9 +3,27 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Toutes les collections : acces reserve aux utilisateurs authentifies
+    // Écritures comptables : inaltérables depuis le navigateur.
+    // Création, modification, annulation et validation passent par les fonctions serveur
+    // (netlify/functions), qui contrôlent l'équilibre et la période validée.
+    // Seul le rattachement à la fiche d'origine (sourceId) peut être complété côté client.
+    match /ecritures/{ecritureId} {
+      allow read: if request.auth != null;
+      allow update: if request.auth != null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sourceId', 'updatedAt']);
+    }
+
+    // Verrou de période et numérotation : écrits uniquement par la fonction de validation.
+    match /settings/verrou {
+      allow read: if request.auth != null;
+    }
+
+    // Autres collections : accès réservé aux utilisateurs authentifiés
     match /{collection}/{docId} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && collection != 'ecritures'
+        && !(collection == 'settings' && docId == 'verrou');
     }
   }
 }

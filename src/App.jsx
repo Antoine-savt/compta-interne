@@ -27,6 +27,8 @@ import CompteResultat from './pages/compta/CompteResultat';
 import GrandLivre from './pages/compta/GrandLivre';
 import BalanceGenerale from './pages/compta/BalanceGenerale';
 import Journaux from './pages/compta/Journaux';
+import Cloture from './pages/compta/Cloture';
+import Banque from './pages/Banque';
 import Documents from './pages/Documents';
 import Agenda from './pages/Agenda';
 import AgendaDisponibilites from './pages/AgendaDisponibilites';
@@ -72,6 +74,24 @@ const SECTIONS_CONFIG = [
             { to: '/compta/grand-livre', label: 'Grand livre' },
             { to: '/compta/balance', label: 'Balance générale' },
             { to: '/compta/journaux', label: 'Journaux & FEC' },
+            { to: '/compta/cloture', label: "Clôture de l'exercice" },
+        ],
+    },
+    {
+        id: 'banque',
+        title: 'Banque',
+        icon: (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 21h18"></path>
+                <path d="M5 21V10"></path>
+                <path d="M19 21V10"></path>
+                <path d="M9 21V10"></path>
+                <path d="M15 21V10"></path>
+                <path d="M12 3l9 5H3z"></path>
+            </svg>
+        ),
+        links: [
+            { to: '/banque', label: 'Compte Shine' },
         ],
     },
     {
@@ -473,6 +493,8 @@ function AppLayout() {
                     <Route path="/compta/grand-livre" element={<GrandLivre />} />
                     <Route path="/compta/balance" element={<BalanceGenerale />} />
                     <Route path="/compta/journaux" element={<Journaux />} />
+                    <Route path="/compta/cloture" element={<Cloture />} />
+                    <Route path="/banque" element={<Banque />} />
 
                     {/* Recettes */}
                     <Route path="/facturation/nouvelle" element={<FacturationClient />} />

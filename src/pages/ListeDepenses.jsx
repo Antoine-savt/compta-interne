@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { collection, query, orderBy, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant, formatDate } from '../services/helpers';
+import { formatMontant, formatDate, toISODate } from '../services/helpers';
 import { DetailComptable } from '../components/DetailComptable';
 import { ModalModifierOperation } from '../components/ModalModifierOperation';
 import { getCached, setCached } from '../services/dataCache';
@@ -39,7 +39,7 @@ export default function ListeDepenses() {
     }, []);
 
     async function marquerPayee(depense) {
-        const today = new Date().toISOString().split('T')[0];
+        const today = toISODate(new Date());
         const mvt = [
             { compte: '401', libelle: depense.fournisseurNom || 'Fournisseur', debit: depense.montant, credit: 0 },
             { compte: '512', libelle: 'Banque', debit: 0, credit: depense.montant },

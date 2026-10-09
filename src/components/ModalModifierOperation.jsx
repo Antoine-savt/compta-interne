@@ -31,11 +31,13 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { invalidateEcrituresCache } from '../services/comptaService';
+import { ecrireEcriture, modifierEcriture, annulerEcriture } from '../services/api';
 import { invalidateCache } from '../services/dataCache';
 import { formatMontant, formatDate, calculerTTCdepuisHT, toISODate } from '../services/helpers';
 import { FileUpload } from './FileUpload';
 import { DateInput } from './common/DateInput';
 import { RECURRENCES, MODES_PAIEMENT, computeTotaux } from './FacturationClient';
+import { useRegimeTVA, MENTION_FRANCHISE } from '../services/tva';
 
 // Types d'opérations disposant d'un formulaire métier dédié ; tout le reste s'édite en écriture générale
 const TYPES_METIER = ['depense', 'cca', 'capital_initial', 'facture'];
@@ -49,7 +51,7 @@ const nouvelleLigneFacture = (dateDebut) => ({
     recurrence: 'unique',
 });
 
-const CATEGORIES_DEPENSES = [
+export const CATEGORIES_DEPENSES = [
     { id: 'saas', label: 'Logiciels & SaaS', compte: '6135' },
     { id: 'cloud', label: 'Hébergement Cloud', compte: '6135' },
     { id: 'materiel', label: 'Matériel informatique', compte: '2183' },
@@ -75,6 +77,8 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
     const [activeEcriture, setActiveEcriture] = useState(null);
     const [sourceData, setSourceData] = useState(null);
     const [actualSourceId, setActualSourceId] = useState(sourceId || null);
+    const [dateVerrou, setDateVerrou] = useState(null);
+    const regimeTVA = useRegimeTVA();
 
     // Listes de référence
     const [associes, setAssocies] = useState([]);
@@ -142,11 +146,13 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
         setError('');
         try {
             // Charger les tables référentielles
-            const [assSnap, fourSnap, clSnap] = await Promise.all([
+            const [assSnap, fourSnap, clSnap, verrouSnap] = await Promise.all([
                 getDocs(collection(db, 'associes')),
                 getDocs(collection(db, 'fournisseurs')),
                 getDocs(collection(db, 'clients')),
+                getDoc(doc(db, 'settings', 'verrou')),
             ]);
+            setDateVerrou(verrouSnap.exists() ? verrouSnap.data().dateVerrou ?? null : null);
             setAssocies(assSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
             setFournisseurs(fourSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
             setClients(clSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -413,6 +419,19 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
         setError('');
         setSuccessMsg('');
 
+        // Toutes les écritures passent par le serveur : création, ou modification
+        // (directe en brouillard, par contre-passation si l'écriture est validée)
+        const corrections = [];
+        async function enregistrer(ecritureId, ecriture) {
+            if (ecritureId) {
+                const res = await modifierEcriture(ecritureId, ecriture);
+                if (res.remplacee) corrections.push(res);
+                return res.ecritureId;
+            }
+            const res = await ecrireEcriture(ecriture);
+            return res.ecritureId;
+        }
+
         try {
             if (operationType === 'depense') {
                 const montantNum = parseFloat(depMontant);
@@ -446,32 +465,15 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                 const ecOuverteEstPaiement = activeEcriture?.journal === 'BQ';
                 let ecDepId = sourceData?.ecritureDepenseIds?.[0] || (ecOuverteEstPaiement ? null : activeEcriture?.id) || null;
 
-                // Si pas d'écriture AC trouvée, on en crée une
-                if (!ecDepId) {
-                    const newEcSnap = await addDoc(collection(db, 'ecritures'), {
-                        journal: 'AC',
-                        date: new Date(depDate),
-                        libelle: libelleDepense,
-                        pieceRef: 'FAC-' + Date.now().toString().slice(-4),
-                        sourceType: 'depense',
-                        sourceId: targetDepId || null,
-                        mouvements: mvtsAchat,
-                        statut: 'active',
-                        createdAt: serverTimestamp(),
-                        updatedAt: serverTimestamp(),
-                    });
-                    ecDepId = newEcSnap.id;
-                } else {
-                    // Mise à jour de l'écriture AC
-                    await updateDoc(doc(db, 'ecritures', ecDepId), {
-                        date: new Date(depDate),
-                        libelle: libelleDepense,
-                        mouvements: mvtsAchat,
-                        sourceType: 'depense',
-                        sourceId: targetDepId || null,
-                        updatedAt: serverTimestamp(),
-                    });
-                }
+                // Écriture d'achat (AC) : création si absente, sinon modification
+                ecDepId = await enregistrer(ecDepId, {
+                    journal: 'AC',
+                    date: depDate,
+                    libelle: libelleDepense,
+                    sourceType: 'depense',
+                    sourceId: targetDepId || null,
+                    mouvements: mvtsAchat,
+                });
 
                 // 2. Gestion du paiement (journal BQ)
                 const ecPaiementIds = [...(sourceData?.ecriturePaiementIds || [])];
@@ -485,33 +487,20 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                         { compte: '512', libelle: 'Banque', debit: 0, credit: montantNum },
                     ];
 
-                    if (ecPaiementIds.length > 0) {
-                        await updateDoc(doc(db, 'ecritures', ecPaiementIds[0]), {
-                            statut: 'active',
-                            date: new Date(datePaye),
-                            libelle: `Paiement [${actLabel}] ${categorie.label} — ${depFournisseurNom.trim()}`,
-                            mouvements: mvtsPaiement,
-                            updatedAt: serverTimestamp(),
-                        });
-                    } else {
-                        const newEcPay = await addDoc(collection(db, 'ecritures'), {
-                            journal: 'BQ',
-                            date: new Date(datePaye),
-                            libelle: `Paiement [${actLabel}] ${categorie.label} — ${depFournisseurNom.trim()}`,
-                            pieceRef: 'PAI-' + Date.now().toString().slice(-4),
-                            sourceType: 'depense',
-                            sourceId: targetDepId || null,
-                            mouvements: mvtsPaiement,
-                            statut: 'active',
-                            createdAt: serverTimestamp(),
-                            updatedAt: serverTimestamp(),
-                        });
-                        ecPaiementIds.push(newEcPay.id);
-                    }
+                    const idPaiement = await enregistrer(ecPaiementIds[0] || null, {
+                        journal: 'BQ',
+                        date: datePaye,
+                        libelle: `Paiement [${actLabel}] ${categorie.label} — ${depFournisseurNom.trim()}`,
+                        sourceType: 'depense',
+                        sourceId: targetDepId || null,
+                        mouvements: mvtsPaiement,
+                    });
+                    if (ecPaiementIds.length) ecPaiementIds[0] = idPaiement;
+                    else ecPaiementIds.push(idPaiement);
                 } else if (ecPaiementIds.length > 0) {
-                    // Marqué comme non payé : annuler l'écriture de paiement
+                    // Marqué comme non payé : annuler l'écriture de paiement (contre-passation si elle est validée)
                     for (const pId of ecPaiementIds) {
-                        await updateDoc(doc(db, 'ecritures', pId), { statut: 'annulee', updatedAt: serverTimestamp() });
+                        await annulerEcriture(pId, 'Dépense repassée en « à payer »');
                     }
                 }
 
@@ -582,30 +571,14 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
                 const libelleCca = `${ccaType === 'apport' ? 'Apport' : 'Remboursement'} CCA — ${nomAss} — ${ccaDescription.trim()}`;
 
-                if (ecId) {
-                    await updateDoc(doc(db, 'ecritures', ecId), {
-                        date: new Date(ccaDate),
-                        libelle: libelleCca,
-                        mouvements: mvts,
-                        sourceType: `cca_${ccaType}`,
-                        sourceId: targetCcaId || null,
-                        updatedAt: serverTimestamp(),
-                    });
-                } else {
-                    const newEcSnap = await addDoc(collection(db, 'ecritures'), {
-                        journal: 'BQ',
-                        date: new Date(ccaDate),
-                        libelle: libelleCca,
-                        pieceRef: 'CCA-' + Date.now().toString().slice(-4),
-                        sourceType: `cca_${ccaType}`,
-                        sourceId: targetCcaId || null,
-                        mouvements: mvts,
-                        statut: 'active',
-                        createdAt: serverTimestamp(),
-                        updatedAt: serverTimestamp(),
-                    });
-                    ecId = newEcSnap.id;
-                }
+                ecId = await enregistrer(ecId, {
+                    journal: 'BQ',
+                    date: ccaDate,
+                    libelle: libelleCca,
+                    sourceType: `cca_${ccaType}`,
+                    sourceId: targetCcaId || null,
+                    mouvements: mvts,
+                });
 
                 const ccaPayload = {
                     associeId: ccaAssocieId,
@@ -650,28 +623,14 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     if (confSnap.exists()) ecId = confSnap.data()?.ecritureCapitalInitialId;
                 }
 
-                if (ecId) {
-                    await updateDoc(doc(db, 'ecritures', ecId), {
-                        date: new Date(capDate),
-                        libelle: libelleCap,
-                        pieceRef: 'STATUTS',
-                        mouvements: mvts,
-                        updatedAt: serverTimestamp(),
-                    });
-                } else {
-                    const res = await addDoc(collection(db, 'ecritures'), {
-                        journal: 'BQ',
-                        date: new Date(capDate),
-                        libelle: libelleCap,
-                        sourceType: 'capital_initial',
-                        pieceRef: 'STATUTS',
-                        mouvements: mvts,
-                        statut: 'active',
-                        createdAt: serverTimestamp(),
-                        updatedAt: serverTimestamp(),
-                    });
-                    ecId = res.id;
-                }
+                ecId = await enregistrer(ecId || null, {
+                    journal: 'BQ',
+                    date: capDate,
+                    libelle: libelleCap,
+                    sourceType: 'capital_initial',
+                    pieceRef: 'STATUTS',
+                    mouvements: mvts,
+                });
 
                 await updateDoc(doc(db, 'settings', 'config'), {
                     capitalInitial: montantNum,
@@ -734,27 +693,14 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                 const targetFactId = actualSourceId;
 
                 // 1. Écriture de vente (VT)
-                let ecId = facEcFactId;
-                const venteFields = {
-                    date: new Date(facDate),
+                const ecId = await enregistrer(facEcFactId, {
+                    journal: 'VT',
+                    date: facDate,
                     libelle: libelleFact,
                     mouvements: mvtsVente,
                     sourceId: targetFactId || null,
                     sourceType: 'facturation',
-                    statut: 'active',
-                    updatedAt: serverTimestamp(),
-                };
-                if (ecId) {
-                    await updateDoc(doc(db, 'ecritures', ecId), venteFields);
-                } else {
-                    const res = await addDoc(collection(db, 'ecritures'), {
-                        ...venteFields,
-                        journal: 'VT',
-                        pieceRef: 'VT-' + Date.now().toString().slice(-4),
-                        createdAt: serverTimestamp(),
-                    });
-                    ecId = res.id;
-                }
+                });
 
                 // 2. Écriture d'encaissement (BQ) : banque au net, frais en charge, client soldé du brut
                 let ecPayId = facEcPaiementId;
@@ -767,31 +713,19 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                             : []),
                         { compte: '411', libelle: nomClientFinal, debit: 0, credit: payeBrut },
                     ];
-                    const payFields = {
-                        date: new Date(estStripe ? facDateVirement : facDatePaiement),
+                    ecPayId = await enregistrer(ecPayId, {
+                        journal: 'BQ',
+                        date: estStripe ? facDateVirement : facDatePaiement,
                         libelle: estStripe
                             ? `Virement Stripe vers compte bancaire — ${libelleFact} (payé par client le ${formatDate(facDatePaiement)})`
                             : `Règlement reçu (${facModePaiement}) — ${libelleFact}`,
                         mouvements: mvtsPaiement,
                         sourceId: targetFactId || null,
                         sourceType: 'facturation',
-                        statut: 'active',
-                        updatedAt: serverTimestamp(),
-                    };
-                    if (ecPayId) {
-                        await updateDoc(doc(db, 'ecritures', ecPayId), payFields);
-                    } else {
-                        const res = await addDoc(collection(db, 'ecritures'), {
-                            ...payFields,
-                            journal: 'BQ',
-                            pieceRef: 'ENC-' + Date.now().toString().slice(-4),
-                            createdAt: serverTimestamp(),
-                        });
-                        ecPayId = res.id;
-                    }
+                    });
                 } else if (ecPayId) {
-                    // Plus d'encaissement en banque : on annule l'écriture BQ existante
-                    await updateDoc(doc(db, 'ecritures', ecPayId), { statut: 'annulee', updatedAt: serverTimestamp() });
+                    // Plus d'encaissement en banque : on annule l'écriture BQ (contre-passation si elle est validée)
+                    await annulerEcriture(ecPayId, 'Encaissement retiré de la facture');
                     ecPayId = null;
                 }
 
@@ -863,23 +797,26 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                     throw new Error(`L'écriture n'est pas équilibrée : Total Débit = ${formatMontant(dTot)} vs Total Crédit = ${formatMontant(cTot)}.`);
                 }
 
-                await updateDoc(doc(db, 'ecritures', activeEcriture.id), {
-                    date: new Date(genDate),
+                await enregistrer(activeEcriture.id, {
+                    journal: activeEcriture.journal,
+                    date: genDate,
                     libelle: genLibelle.trim(),
-                    pieceRef: genPieceRef.trim(),
+                    pieceRef: genPieceRef.trim() || null,
                     mouvements: genMouvements
                         .filter((m) => String(m.compte || '').trim())
                         .map((m) => ({
-                            ...m,
                             compte: String(m.compte).trim(),
+                            libelle: m.libelle || '',
                             debit: parseFloat(m.debit) || 0,
                             credit: parseFloat(m.credit) || 0,
                         })),
-                    updatedAt: serverTimestamp(),
                 });
                 setSuccessMsg('Écriture comptable mise à jour avec succès.');
             }
 
+            if (corrections.length) {
+                setSuccessMsg((m) => `${m} L'écriture étant validée, la correction a été passée par contre-passation et nouvelle écriture (datée du ${formatDate(corrections[0].date)}).`);
+            }
             invalidateEcrituresCache();
             setTimeout(() => {
                 onSaved?.();
@@ -895,13 +832,30 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
     // ─── Suppression complète de l'opération ───
     async function handleDeleteOperation() {
-        const msg = `Êtes-vous absolument certain de vouloir supprimer cette opération ?\n\nCette action supprimera également l'écriture comptable correspondante du Grand Livre et de tous les états financiers.`;
+        const msg = activeEcriture?.validee || estFigee
+            ? `Supprimer cette opération ?\n\nSes écritures sont validées : elles ne seront pas effacées mais neutralisées par une contre-passation datée d'aujourd'hui.`
+            : `Supprimer cette opération ?\n\nSes écritures comptables (non encore validées) seront retirées de la comptabilité.`;
         if (!window.confirm(msg)) return;
 
         setSaving(true);
         setError('');
         try {
-            // 1. Supprimer le document source si existant
+            // 1. Annuler les écritures comptables (jamais d'effacement : contre-passation si validées)
+            const ecrituresAAnnuler = new Set();
+            if (activeEcriture?.id) ecrituresAAnnuler.add(activeEcriture.id);
+            if (operationType === 'facture') {
+                [facEcFactId, facEcPaiementId].filter(Boolean).forEach((id) => ecrituresAAnnuler.add(id));
+            }
+            if (sourceData?.ecritureDepenseIds) sourceData.ecritureDepenseIds.forEach((id) => ecrituresAAnnuler.add(id));
+            if (sourceData?.ecriturePaiementIds) sourceData.ecriturePaiementIds.forEach((id) => ecrituresAAnnuler.add(id));
+            if (sourceData?.ecritureId) ecrituresAAnnuler.add(sourceData.ecritureId);
+            let nbContrepassees = 0;
+            for (const eId of ecrituresAAnnuler) {
+                const res = await annulerEcriture(eId, 'Suppression de l\'opération');
+                if (res.mode === 'contrepassation') nbContrepassees += 1;
+            }
+
+            // 2. Supprimer le document source si existant
             if (operationType === 'depense' && actualSourceId) {
                 await deleteDoc(doc(db, 'depenses', actualSourceId));
                 invalidateCache('depenses');
@@ -916,27 +870,10 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                 invalidateCache('facturations');
             }
 
-            // 2. Supprimer ou marquer annulées les écritures comptables
-            const ecrituresToDelete = new Set();
-            if (activeEcriture?.id) ecrituresToDelete.add(activeEcriture.id);
-            if (operationType === 'facture') {
-                [facEcFactId, facEcPaiementId].filter(Boolean).forEach((id) => ecrituresToDelete.add(id));
-            }
-            if (sourceData?.ecritureDepenseIds) sourceData.ecritureDepenseIds.forEach((id) => ecrituresToDelete.add(id));
-            if (sourceData?.ecriturePaiementIds) sourceData.ecriturePaiementIds.forEach((id) => ecrituresToDelete.add(id));
-            if (sourceData?.ecritureId) ecrituresToDelete.add(sourceData.ecritureId);
-
-            for (const eId of ecrituresToDelete) {
-                try {
-                    await deleteDoc(doc(db, 'ecritures', eId));
-                } catch (e) {
-                    // Si la suppression physique échoue, passer en statut annulée
-                    await updateDoc(doc(db, 'ecritures', eId), { statut: 'annulee', updatedAt: serverTimestamp() });
-                }
-            }
-
             invalidateEcrituresCache();
-            setSuccessMsg('Opération et écritures comptables supprimées avec succès.');
+            setSuccessMsg(nbContrepassees
+                ? `Opération supprimée. ${nbContrepassees} écriture(s) validée(s) neutralisée(s) par contre-passation (elles restent visibles dans les journaux).`
+                : 'Opération et écritures comptables supprimées avec succès.');
             setTimeout(() => {
                 onSaved?.();
                 onClose?.();
@@ -947,6 +884,13 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
             setSaving(false);
         }
     }
+
+    // Écriture figée : validée, ou datée dans une période validée → correction par contre-passation
+    const estFigee = !!activeEcriture && (
+        !!activeEcriture.validee
+        || (!!dateVerrou && toISODate(activeEcriture.date) <= dateVerrou)
+    );
+    const estContrepassee = !!(activeEcriture?.contrepasseeParId || activeEcriture?.annuleeParId || activeEcriture?.sourceType === 'contrepassation');
 
     // Aperçu live de la facture en cours de modification
     const facTotalHT = facLignes.reduce((s, l) => s + (parseFloat(l.prixUnitaire) || 0) * (parseFloat(l.quantite) || 1), 0);
@@ -1044,6 +988,17 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                         <form onSubmit={handleSave}>
                             {error && <div className="notice notice--danger" style={{ marginBottom: 16 }}>{error}</div>}
                             {successMsg && <div className="notice notice--success" style={{ marginBottom: 16 }}>{successMsg}</div>}
+                            {estContrepassee ? (
+                                <div className="notice notice--warning" style={{ marginBottom: 16 }}>
+                                    Cette écriture a été contre-passée : elle est conservée pour l'historique et ne peut plus être modifiée.
+                                </div>
+                            ) : estFigee && (
+                                <div className="notice notice--info" style={{ marginBottom: 16 }}>
+                                    Écriture validée{activeEcriture?.numeroEcriture ? ` (n° ${activeEcriture.numeroEcriture})` : ''} : elle ne sera pas réécrite.
+                                    Vos modifications seront enregistrées par une contre-passation et une nouvelle écriture
+                                    {dateVerrou ? `, datées après le ${formatDate(dateVerrou)} si la date choisie tombe dans la période validée` : ''}.
+                                </div>
+                            )}
 
                             {/* ─── FORMULAIRE DÉPENSE ─── */}
                             {operationType === 'depense' && (
@@ -1162,14 +1117,19 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                     {/* TVA & Paiement */}
                                     <div className="card" style={{ padding: '14px 18px', background: 'var(--bg2)', marginBottom: 16 }}>
                                         <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
+                                            {regimeTVA.franchise && !depTvaOn && (
+                                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Franchise de TVA : montant TTC en charge</span>
+                                            )}
+                                            {(!regimeTVA.franchise || depTvaOn) && (
                                             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                                                 <input
                                                     type="checkbox"
                                                     checked={depTvaOn}
                                                     onChange={(e) => setDepTvaOn(e.target.checked)}
                                                 />
-                                                <span style={{ fontWeight: 600 }}>TVA Déductible</span>
+                                                <span style={{ fontWeight: 600 }}>TVA Déductible{regimeTVA.franchise ? ' (incompatible avec la franchise : à décocher)' : ''}</span>
                                             </label>
+                                            )}
 
                                             {depTvaOn && (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1452,10 +1412,14 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
 
                                     <div className="card" style={{ padding: '12px 16px', background: 'var(--bg2)', marginBottom: 16 }}>
                                         <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                                                <input type="checkbox" checked={facTvaOn} onChange={(e) => setFacTvaOn(e.target.checked)} />
-                                                <span style={{ fontWeight: 600 }}>TVA collectée</span>
-                                            </label>
+                                            {regimeTVA.franchise && !facTvaOn ? (
+                                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{MENTION_FRANCHISE}</span>
+                                            ) : (
+                                                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                                                    <input type="checkbox" checked={facTvaOn} onChange={(e) => setFacTvaOn(e.target.checked)} />
+                                                    <span style={{ fontWeight: 600 }}>TVA collectée{regimeTVA.franchise ? ' (incompatible avec la franchise : à décocher)' : ''}</span>
+                                                </label>
+                                            )}
                                             {facTvaOn && (
                                                 <select
                                                     className="form-select"
@@ -1827,7 +1791,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                     <button
                                         type="submit"
                                         className="btn btn--primary"
-                                        disabled={saving}
+                                        disabled={saving || estContrepassee}
                                         style={{ minWidth: 160 }}
                                     >
                                         {saving ? 'Enregistrement...' : 'Enregistrer les modifications'}

@@ -7,7 +7,7 @@
  *
  * Écritures (via garde-fou) :
  *  Sans TVA : Débit 512 Banque (net) / Débit 6278 Frais Stripe / Crédit 706 (brut)
- *  Avec TVA : Débit 512 (net) / Débit 6278 (frais) / Crédit 706 (HT) / Crédit 4457 (TVA)
+ *  Avec TVA : Débit 512 (net) / Débit 6278 (frais) / Crédit 706 (HT) / Crédit 44571 (TVA)
  */
 import { useState, useEffect } from 'react';
 import {
@@ -346,7 +346,7 @@ function buildMouvements(net, frais, montantHT, montantTVA, tvaOn, clientNom) {
         { compte: '512', libelle: 'Banque  virement Stripe', debit: net, credit: 0 },
         { compte: '6278', libelle: 'Frais Stripe', debit: frais, credit: 0 },
         { compte: '706', libelle: `Prestations HT  ${clientNom}`, debit: 0, credit: montantHT },
-        { compte: '4457', libelle: 'TVA collectée', debit: 0, credit: montantTVA },
+        { compte: '44571', libelle: 'TVA collectée', debit: 0, credit: montantTVA },
     ].filter((m) => m.debit || m.credit);
 }
 

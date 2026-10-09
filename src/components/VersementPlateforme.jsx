@@ -8,7 +8,7 @@
  *
  * Écritures (via garde-fou) :
  *   Débit 512 Banque (net)
- *   Débit 6226 Commissions plateformes (commission)
+ *   Débit 6228 Commissions plateformes (intermédiaires) (commission)
  *   Crédit 706 Prestations de services (brut)
  *
  * Compte 706 utilisé par défaut (prestations)  à ajuster si nécessaire en
@@ -56,7 +56,7 @@ export function VersementPlateforme({ onCreated }) {
 
             const mouvements = [
                 { compte: '512', libelle: `Banque  ${plateforme}`, debit: net, credit: 0 },
-                { compte: '6226', libelle: `Commission ${plateforme}`, debit: comm, credit: 0 },
+                { compte: '6228', libelle: `Commission ${plateforme}`, debit: comm, credit: 0 },
                 { compte: '706', libelle: `Abonnements Wheeloh  ${plateforme}`, debit: 0, credit: brut },
             ].filter((m) => m.debit > 0 || m.credit > 0);
 
@@ -205,7 +205,7 @@ export function VersementPlateforme({ onCreated }) {
                         <tbody>
                             {[
                                 { compte: '512', libelle: `Banque  ${plateforme}`, debit: net, credit: 0 },
-                                { compte: '6226', libelle: `Commission ${plateforme}`, debit: comm, credit: 0 },
+                                { compte: '6228', libelle: `Commission ${plateforme}`, debit: comm, credit: 0 },
                                 { compte: '706', libelle: `Abonnements Wheeloh`, debit: 0, credit: brut },
                             ].filter((m) => m.debit > 0 || m.credit > 0).map((m, i) => (
                                 <tr key={i}>

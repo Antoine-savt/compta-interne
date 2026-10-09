@@ -17,6 +17,7 @@ import { getEcrituresActives, calculerGrandLivre, calculerCompteResultat } from 
 import { formatMontant, formatDate } from '../services/helpers';
 import { getCached, setCached } from '../services/dataCache';
 import { ModalModifierOperation } from '../components/ModalModifierOperation';
+import { chargerTransactions, chargerSoldeBanque } from '../services/banqueService';
 
 export default function Overview() {
     const navigate = useNavigate();
@@ -37,7 +38,7 @@ export default function Overview() {
         }
         try {
             const [ecrData, assSnap, ccaSnap, avSnap, cliSnap, depSnap] = await Promise.all([
-                getEcrituresActives({ dateDebut: `${anneeCourante}-01-01` }),
+                getEcrituresActives(),
                 getDocs(collection(db, 'associes')),
                 getDocs(collection(db, 'ccaMouvements')),
                 getDocs(collection(db, 'avancesFrags')),
@@ -75,9 +76,26 @@ export default function Overview() {
         loadData();
     }, [loadData]);
 
+    // Compte Shine : transactions importées restant à rapprocher
+    const [banque, setBanque] = useState(null);
+    useEffect(() => {
+        Promise.all([chargerTransactions(), chargerSoldeBanque()])
+            .then(([txs, solde]) => setBanque({
+                aTraiter: txs.filter((t) => t.statut === 'a_traiter' && !t.lieeA).length,
+                solde,
+            }))
+            .catch(() => setBanque(null));
+    }, []);
+
     // ─── Calculs financiers en temps réel ───
+    // Bilan (trésorerie, créances, CCA) : cumul depuis l'origine ; résultat : exercice en cours uniquement
     const grandLivre = useMemo(() => calculerGrandLivre(ecritures), [ecritures]);
-    const compteResultat = useMemo(() => calculerCompteResultat(ecritures), [ecritures]);
+    const ecrituresExercice = useMemo(() => {
+        const debut = new Date(`${anneeCourante}-01-01`);
+        const fin = new Date(`${anneeCourante}-12-31T23:59:59`);
+        return ecritures.filter((e) => e.dateObj >= debut && e.dateObj <= fin);
+    }, [ecritures, anneeCourante]);
+    const compteResultat = useMemo(() => calculerCompteResultat(ecrituresExercice), [ecrituresExercice]);
 
     // 1. Trésorerie disponible (Compte 512 Banque)
     const tresorerieBanque = useMemo(() => {
@@ -140,7 +158,7 @@ export default function Overview() {
     // ─── Dernières transactions chronologiques ───
     const dernieresTransactions = useMemo(() => {
         // Prendre les écritures les plus récentes triées par date décroissante
-        const sorted = [...ecritures].sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
+        const sorted = [...ecritures].filter((e) => e.dateObj <= new Date()).sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
         const recent = sorted.slice(0, 15);
 
         return recent.map((ec) => {
@@ -170,7 +188,7 @@ export default function Overview() {
 
             // Type explicite
             const src = ec.sourceType || '';
-            if (src.includes('facture') || ec.journal === 'VE') {
+            if (src.includes('factur') || ec.journal === 'VT' || ec.journal === 'VE') {
                 typeLabel = 'Recette / Vente';
                 typeBadge = 'badge--success';
             } else if (src.includes('depense') || ec.journal === 'AC') {
@@ -265,6 +283,16 @@ export default function Overview() {
                     </button>
                 </div>
             </div>
+
+            {banque?.aTraiter > 0 && (
+                <div className="notice notice--warning" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                    <span>
+                        <strong>{banque.aTraiter} transaction(s) Shine</strong> à rattacher à la comptabilité
+                        {banque.solde ? ` · solde Shine ${formatMontant(banque.solde.soldeBancaire)} au ${formatDate(banque.solde.date)}` : ''}.
+                    </span>
+                    <button className="btn btn--primary btn--sm" onClick={() => navigate('/banque')}>Traiter</button>
+                </div>
+            )}
 
             {/* Bloc Trésorerie principale */}
             <div className="card" style={{ padding: '20px 24px', marginBottom: 20 }}>

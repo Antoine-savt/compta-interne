@@ -569,7 +569,7 @@ export default function FicheClient() {
 
         const nouvelEchange = {
             id: 'ech_' + Date.now(),
-            date: exchangeForm.date || new Date().toISOString().split('T')[0],
+            date: exchangeForm.date || toISODate(new Date()),
             titre: exchangeForm.titre.trim(),
             format: exchangeForm.format || 'visio',
             contenu: exchangeForm.contenu.trim(),
@@ -580,7 +580,7 @@ export default function FicheClient() {
         setClient((prev) => ({ ...prev, historiqueEchanges: updatedHistorique }));
         setShowAddExchange(false);
         setExchangeForm({
-            date: new Date().toISOString().split('T')[0],
+            date: toISODate(new Date()),
             titre: '',
             format: 'visio',
             contenu: '',
@@ -612,7 +612,7 @@ export default function FicheClient() {
 
     // ─── Encaisser une facture directement ─────────────────────────────────────
     async function handleMarquerFacturePayee(f) {
-        const today = new Date().toISOString().split('T')[0];
+        const today = toISODate(new Date());
         const mvt = [
             { compte: '512', libelle: 'Banque', debit: f.totalTTC, credit: 0 },
             { compte: '411', libelle: f.clientNom || client.nom, debit: 0, credit: f.totalTTC },
@@ -1801,7 +1801,7 @@ export default function FicheClient() {
             {showRdvModal && (
                 <ModalCreateRdv
                     preselectedClient={client}
-                    preselectedDate={client.prochainRdvDate || new Date().toISOString().split('T')[0]}
+                    preselectedDate={client.prochainRdvDate || toISODate(new Date())}
                     preselectedTime={client.prochainRdvHeure || '14:00'}
                     clients={[client]}
                     allRdvs={allRdvs}

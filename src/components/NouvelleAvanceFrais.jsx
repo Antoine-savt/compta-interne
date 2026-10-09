@@ -65,7 +65,7 @@ export function NouvelleAvanceFrais({ onCreated }) {
 
         try {
             const compteCharge = categorie.compte;
-            const compteCC = associe.compteCC;
+            const compteCC = associe.compteCC || '455';
 
             // Écriture 1 : avance (charge / compte courant associé)
             const { ecritureId: ecritureAvanceId } = await ecrireEcriture({
@@ -80,7 +80,7 @@ export function NouvelleAvanceFrais({ onCreated }) {
             });
 
             let ecritureVersementId = null;
-            const today = new Date().toISOString().split('T')[0];
+            const today = toISODate(new Date());
 
             // Écriture 2 (optionnelle) : remboursement immédiat
             if (dejaRembourse) {
@@ -134,7 +134,7 @@ export function NouvelleAvanceFrais({ onCreated }) {
             <div className="notice notice--success">
                 Avance de {formatMontant(done.montant)} enregistrée pour {done.associeNom}.
                 {done.dejaRembourse
-                    ? ' Remboursement immédiat enregistré (457 → 512).'
+                    ? ' Remboursement immédiat enregistré (455 → 512).'
                     : ' Le remboursement se fait depuis la fiche associé.'}
             </div>
             <div style={{ display: 'flex', gap: 10 }}>

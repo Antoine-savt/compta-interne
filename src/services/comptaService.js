@@ -63,6 +63,8 @@ export const NOMS_COMPTES = {
     '6257': 'Réceptions & Repas d\'affaires',
     '626': 'Frais postaux et télécommunications',
     '627': 'Services bancaires et commissions (Stripe, etc.)',
+    '6278': 'Autres frais et commissions sur prestations de services (Stripe)',
+    '6228': "Rémunérations d'intermédiaires divers (commissions App Store / Play Store)",
     '635': 'Autres impôts et taxes',
     '641': 'Rémunérations du personnel',
     '645': 'Charges de sécurité sociale et de prévoyance',
@@ -135,12 +137,16 @@ export async function getEcrituresActives(filtres = {}, options = {}) {
     let rawEcritures = _ecrituresCache;
 
     if (!rawEcritures || options.forceRefresh || (now - _ecrituresTimestamp > ECRITURES_TTL_MS)) {
+        // Une écriture contre-passée reste dans les comptes (son écriture inverse la neutralise).
+        // Anciennes contre-passations : l'originale était marquée 'annulee' avec annuleeParId.
         const q = query(
             collection(db, 'ecritures'),
-            where('statut', '==', 'active')
+            where('statut', 'in', ['active', 'annulee'])
         );
         const snap = await getDocs(q);
-        rawEcritures = snap.docs.map((d) => {
+        rawEcritures = snap.docs
+            .filter((d) => d.data().statut === 'active' || d.data().annuleeParId)
+            .map((d) => {
             const data = d.data();
             const dateObj = data.date?.toDate ? data.date.toDate() : new Date(data.date);
             return {
@@ -175,6 +181,85 @@ export async function getEcrituresActives(filtres = {}, options = {}) {
     }
 
     return ecritures;
+}
+
+/**
+ * Solde créditeur d'un compte (crédit - débit) d'après les écritures, à une date donnée (incluse).
+ * Ex. : ce que la société doit à un associé sur son compte courant 455x.
+ */
+export async function soldeCrediteurCompte(compte, dateIso) {
+    const ecritures = await getEcrituresActives(dateIso ? { dateFin: dateIso } : {}, { forceRefresh: true });
+    return +ecritures
+        .flatMap((e) => e.mouvements || [])
+        .filter((m) => String(m.compte).trim() === String(compte).trim())
+        .reduce((s, m) => s + (+m.credit || 0) - (+m.debit || 0), 0)
+        .toFixed(2);
+}
+
+// ─── À-NOUVEAUX ──────────────────────────────────────────────────────────────
+
+export const ID_A_NOUVEAUX = 'A-NOUVEAUX';
+
+/**
+ * Construit l'écriture d'à-nouveaux (journal AN) au premier jour de la période :
+ * reprise des soldes des comptes de bilan (classes 1 à 5) issus des écritures antérieures,
+ * le résultat antérieur non encore affecté étant porté en report à nouveau (110 / 119).
+ * Exemple : capital libéré avant l'ouverture du premier exercice.
+ * @returns {Object|null} écriture synthétique (non enregistrée en base) ou null s'il n'y a rien à reprendre
+ */
+export function construireANouveaux(ecrituresAnterieures, dateDebut) {
+    const soldes = new Map();
+    let resultatAnterieur = 0;
+    ecrituresAnterieures.forEach((e) => (e.mouvements || []).forEach((m) => {
+        const compte = String(m.compte).trim();
+        const solde = (+m.debit || 0) - (+m.credit || 0);
+        if (/^[67]/.test(compte)) resultatAnterieur -= solde;
+        else soldes.set(compte, (soldes.get(compte) || 0) + solde);
+    }));
+
+    const mouvements = [];
+    for (const [compte, s] of [...soldes.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))) {
+        const solde = +s.toFixed(2);
+        if (Math.abs(solde) < 0.005) continue;
+        mouvements.push({ compte, libelle: `À-nouveau ${getLibelleCompte(compte)}`, debit: solde > 0 ? solde : 0, credit: solde < 0 ? -solde : 0 });
+    }
+    resultatAnterieur = +resultatAnterieur.toFixed(2);
+    if (Math.abs(resultatAnterieur) >= 0.005) {
+        mouvements.push(resultatAnterieur > 0
+            ? { compte: '110', libelle: 'Report à nouveau (résultat antérieur non affecté)', debit: 0, credit: resultatAnterieur }
+            : { compte: '119', libelle: 'Report à nouveau (perte antérieure non affectée)', debit: -resultatAnterieur, credit: 0 });
+    }
+    if (!mouvements.length) return null;
+
+    const dateObj = new Date(dateDebut);
+    return {
+        id: ID_A_NOUVEAUX,
+        synthetique: true,
+        journal: 'AN',
+        date: dateObj,
+        dateObj,
+        dateStr: dateDebut,
+        libelle: `À-nouveaux au ${dateDebut.split('-').reverse().join('/')}`,
+        pieceRef: 'AN',
+        statut: 'active',
+        mouvements,
+    };
+}
+
+/**
+ * Écritures de la période précédées de l'écriture d'à-nouveaux reprenant tout l'historique antérieur.
+ * À utiliser pour le bilan, la balance, le grand livre et le FEC.
+ */
+export async function getEcrituresAvecANouveaux({ dateDebut, dateFin, journal } = {}, options = {}) {
+    const toutes = await getEcrituresActives({ dateFin }, options);
+    if (!dateDebut) return journal ? toutes.filter((e) => e.journal === journal) : toutes;
+
+    const dMin = new Date(dateDebut);
+    dMin.setHours(0, 0, 0, 0);
+    const anterieures = toutes.filter((e) => e.dateObj < dMin);
+    const periode = toutes.filter((e) => e.dateObj >= dMin && (!journal || e.journal === journal));
+    const an = !journal || journal === 'AN' ? construireANouveaux(anterieures, dateDebut) : null;
+    return an ? [an, ...periode] : periode;
 }
 
 // ─── GRAND LIVRE ─────────────────────────────────────────────────────────────
@@ -315,10 +400,12 @@ export function calculerCompteResultat(ecritures) {
     });
 
     // Catégorisation des charges
-    const chargesExploitation = chargesLignes.filter((c) => !c.compte.startsWith('66') && !c.compte.startsWith('67') && !c.compte.startsWith('68'));
-    const chargesFinancieres = chargesLignes.filter((c) => c.compte.startsWith('66'));
-    const chargesExceptionnelles = chargesLignes.filter((c) => c.compte.startsWith('67'));
-    const dotationsAmortissements = chargesLignes.filter((c) => c.compte.startsWith('68'));
+    // 686 / 687 = dotations financières / exceptionnelles ; 69 = impôt sur les bénéfices (hors résultat courant)
+    const chargesExploitation = chargesLignes.filter((c) => !/^6[6-9]/.test(c.compte));
+    const chargesFinancieres = chargesLignes.filter((c) => c.compte.startsWith('66') || c.compte.startsWith('686'));
+    const chargesExceptionnelles = chargesLignes.filter((c) => c.compte.startsWith('67') || c.compte.startsWith('687'));
+    const dotationsAmortissements = chargesLignes.filter((c) => c.compte.startsWith('68') && !c.compte.startsWith('686') && !c.compte.startsWith('687'));
+    const impotsBenefices = chargesLignes.filter((c) => c.compte.startsWith('69'));
 
     // Catégorisation des produits
     const produitsExploitation = produitsLignes.filter((c) => !c.compte.startsWith('76') && !c.compte.startsWith('77'));
@@ -330,7 +417,8 @@ export function calculerCompteResultat(ecritures) {
     const totalChargesFinancieres = +chargesFinancieres.reduce((s, c) => s + c.montant, 0).toFixed(2);
     const totalChargesExceptionnelles = +chargesExceptionnelles.reduce((s, c) => s + c.montant, 0).toFixed(2);
     const totalDotations = +dotationsAmortissements.reduce((s, c) => s + c.montant, 0).toFixed(2);
-    const totalCharges = +(totalChargesExploitation + totalChargesFinancieres + totalChargesExceptionnelles + totalDotations).toFixed(2);
+    const totalImpots = +impotsBenefices.reduce((s, c) => s + c.montant, 0).toFixed(2);
+    const totalCharges = +(totalChargesExploitation + totalChargesFinancieres + totalChargesExceptionnelles + totalDotations + totalImpots).toFixed(2);
 
     const totalProduitsExploitation = +produitsExploitation.reduce((s, c) => s + c.montant, 0).toFixed(2);
     const totalProduitsFinanciers = +produitsFinanciers.reduce((s, c) => s + c.montant, 0).toFixed(2);
@@ -350,6 +438,8 @@ export function calculerCompteResultat(ecritures) {
             financieres: chargesFinancieres,
             exceptionnelles: chargesExceptionnelles,
             dotations: dotationsAmortissements,
+            impots: impotsBenefices,
+            totalImpots,
             totalExploitation: totalChargesExploitation,
             totalFinancieres: totalChargesFinancieres,
             totalExceptionnelles: totalChargesExceptionnelles,
@@ -458,7 +548,7 @@ export function calculerBilan(ecritures) {
                 } else {
                     actifAutresCreances.push({ ...c, montant: Math.abs(soldeFourn) });
                 }
-            } else if (num.startsWith('42') || num.startsWith('43') || num.startsWith('44') || num.startsWith('457')) {
+            } else if (num.startsWith('42') || num.startsWith('43') || num.startsWith('44')) {
                 const soldeFisc = +(c.totalCredit - c.totalDebit).toFixed(2);
                 if (soldeFisc >= 0) {
                     passifDettesFiscalesSociales.push({ ...c, montant: soldeFisc });
@@ -537,6 +627,17 @@ export function calculerBilan(ecritures) {
  * Génère le fichier texte tabulé conforme à la norme légale française
  * Article A.47 A-1 du Livre des Procédures Fiscales (LPF).
  */
+/** Texte compatible FEC : une ligne, sans tabulation, tirets et apostrophes typographiques normalisés. */
+function nettoyerTexteFEC(texte) {
+    return String(texte)
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/[‒-―]/g, '-')
+        .replace(/[‘’]/g, "'")
+        .replace(/[“”]/g, '"')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+}
+
 export function genererFEC(ecritures, siren = '000000000', annee = new Date().getFullYear()) {
     const HEADERS = [
         'JournalCode',
@@ -560,6 +661,7 @@ export function genererFEC(ecritures, siren = '000000000', annee = new Date().ge
     ];
 
     const NOMS_JOURNAUX = {
+        AN: 'Journal des A-nouveaux',
         VT: 'Journal des Ventes',
         VE: 'Journal des Ventes',
         AC: 'Journal des Achats',
@@ -568,23 +670,43 @@ export function genererFEC(ecritures, siren = '000000000', annee = new Date().ge
     };
 
     const lines = [HEADERS.join('\t')];
-    let seqEcriture = 1;
+    const aaaammjj = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    let seqBrouillard = 1;
 
-    ecritures.forEach((ecriture) => {
+    // Ordre du FEC : à-nouveaux, puis écritures validées dans l'ordre de leur numéro, puis brouillard par date
+    const ordonnees = [...ecritures].sort((a, b) => {
+        const rang = (e) => (e.synthetique ? 0 : e.numeroEcriture ? 1 : 2);
+        return rang(a) - rang(b)
+            || String(a.numeroEcriture ?? '').localeCompare(String(b.numeroEcriture ?? ''))
+            || a.dateObj - b.dateObj;
+    });
+
+    ordonnees.forEach((ecriture) => {
         const d = ecriture.dateObj;
-        const dateAAAAMMJJ = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+        const dateAAAAMMJJ = aaaammjj(d);
         const journalCode = ecriture.journal || 'OD';
         const journalLib = NOMS_JOURNAUX[journalCode] || journalCode;
-        const pieceRef = ecriture.pieceRef || ecriture.id.slice(0, 8);
-        const ecritureNum = `ECR-${seqEcriture}`;
-        seqEcriture++;
+        const pieceRef = nettoyerTexteFEC(ecriture.pieceRef || ecriture.id.slice(0, 8));
+        // Numéro définitif attribué à la validation ; à-nouveaux = 00000 ; brouillard = numéro provisoire
+        const ecritureNum = ecriture.synthetique
+            ? `${d.getFullYear()}-00000`
+            : ecriture.numeroEcriture || `BROUILLARD-${seqBrouillard++}`;
+        const validAt = ecriture.validatedAt?.toDate ? ecriture.validatedAt.toDate() : null;
+        const validDate = ecriture.synthetique ? dateAAAAMMJJ : validAt ? aaaammjj(validAt) : '';
 
         (ecriture.mouvements ?? []).forEach((mvt) => {
             const compteNum = String(mvt.compte).trim();
-            const compteLib = getLibelleCompte(compteNum);
+            const compteLib = nettoyerTexteFEC(getLibelleCompte(compteNum));
             const debit = mvt.debit ? (+mvt.debit).toFixed(2).replace('.', ',') : '0,00';
             const credit = mvt.credit ? (+mvt.credit).toFixed(2).replace('.', ',') : '0,00';
-            const ecritureLib = (mvt.libelle || ecriture.libelle || 'Ecriture comptable').replace(/[\r\n\t]/g, ' ');
+            // EcritureLib = libellé de l'écriture (norme FEC), complété par le libellé de ligne s'il apporte une précision
+            const libEcriture = (ecriture.libelle || '').trim();
+            const libLigne = (mvt.libelle || '').trim();
+            const ecritureLib = nettoyerTexteFEC(
+                libEcriture && libLigne && !libEcriture.includes(libLigne) && !/^(banque|clients|fournisseurs|prestations de services)$/i.test(libLigne)
+                    ? `${libEcriture} - ${libLigne}`
+                    : (libEcriture || libLigne || 'Ecriture comptable')
+            );
 
             const row = [
                 journalCode,
@@ -602,7 +724,7 @@ export function genererFEC(ecritures, siren = '000000000', annee = new Date().ge
                 credit,
                 '', // Lettrage
                 '', // DateLet
-                dateAAAAMMJJ, // ValidDate
+                validDate, // ValidDate : date de validation (vide tant que l'écriture est en brouillard)
                 '', // Montantdevise
                 '', // Idevise
             ];

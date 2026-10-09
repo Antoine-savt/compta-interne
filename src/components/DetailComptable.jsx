@@ -73,18 +73,18 @@ export function DetailComptable({ ecritureIds, sourceType }) {
                     <div key={ec.id} style={{ marginBottom: 20 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                             <div>
-                                <span className={`badge ${ec.statut === 'annulee' ? 'badge--danger' : 'badge--muted'}`}>
+                                <span className={`badge ${(ec.statut === 'annulee' || ec.contrepasseeParId) ? 'badge--danger' : 'badge--muted'}`}>
                                     Journal {ec.journal}
                                 </span>
                                 {' '}
                                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
                                     {formatDate(ec.date)}  {ec.libelle}
                                 </span>
-                                {ec.statut === 'annulee' && (
+                                {(ec.statut === 'annulee' || ec.contrepasseeParId) && (
                                     <span className="ecriture-annulee-label"> · Annulée par contre-passation le {formatDate(ec.annuleeLeDate)}</span>
                                 )}
                             </div>
-                            {ec.statut === 'active' && (
+                            {ec.statut === 'active' && !ec.contrepasseeParId && ec.sourceType !== 'contrepassation' && (
                                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                     <Tooltip text={TOOLTIP_CORRIGER} />
                                     <button
@@ -114,7 +114,7 @@ export function DetailComptable({ ecritureIds, sourceType }) {
                                         </th>
                                     </tr>
                                 </thead>
-                                <tbody className={ec.statut === 'annulee' ? 'ecriture-annulee' : ''}>
+                                <tbody className={(ec.statut === 'annulee' || ec.contrepasseeParId) ? 'ecriture-annulee' : ''}>
                                     {(ec.mouvements ?? []).map((m, i) => (
                                         <tr key={i}>
                                             <td><code style={{ fontSize: 13 }}>{m.compte}</code></td>

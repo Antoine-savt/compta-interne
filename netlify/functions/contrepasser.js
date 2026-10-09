@@ -4,137 +4,37 @@
  * Correction d'une écriture par contre-passation (jamais par édition directe).
  *
  * Route : POST /api/contrepasser
+ * Body JSON : { ecritureId: "docId", motif: "Erreur de montant" }
  *
- * Body JSON :
- * {
- *   ecritureId: "docId",
- *   motif:      "Erreur de montant — correction du 2026-09-11"
- * }
- *
- * Ce que ça fait :
- * 1. Lit l'écriture originale
- * 2. Crée une nouvelle écriture avec débit↔crédit inversés (passe par ecrireEcriture)
- * 3. Marque l'écriture originale : statut="annulee", annuleeParId, annuleeLeDate
- * 4. Retourne { ok: true, annulationId } pour permettre la re-saisie ensuite
+ * Crée l'écriture inverse (datée dans la période ouverte) ; l'originale reste
+ * comptabilisée avec un lien `contrepasseeParId`, si bien que leur effet net est nul.
+ * Réponse : { ok: true, annulationId }
  */
-
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { verifierEquilibre } from './ecrireEcriture.js';
-
-function getAdminApp() {
-    if (getApps().length > 0) return getApps()[0];
-    const serviceAccount = JSON.parse(
-        Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8')
-    );
-    return initializeApp({ credential: cert(serviceAccount) });
-}
+import {
+    getDb, preparerRequete, reponse, erreurServeur, lireVerrou,
+    contrePasserDansTx, dateCorrection, ErreurCompta,
+} from '../lib/compta.js';
 
 export const handler = async (event) => {
-    if (event.httpMethod !== 'POST') {
-        return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
-    }
-
-    // Auth
-    const idToken = (event.headers['authorization'] ?? '').replace('Bearer ', '').trim();
-    if (!idToken) return { statusCode: 401, body: JSON.stringify({ error: 'Token manquant' }) };
-
-    let uid;
-    try {
-        const adminApp = getAdminApp();
-        const { getAuth } = await import('firebase-admin/auth');
-        const decoded = await getAuth(adminApp).verifyIdToken(idToken);
-        uid = decoded.uid;
-    } catch {
-        return { statusCode: 401, body: JSON.stringify({ error: 'Token invalide' }) };
-    }
-
-    let body;
-    try {
-        body = JSON.parse(event.body ?? '{}');
-    } catch {
-        return { statusCode: 400, body: JSON.stringify({ error: 'Body JSON invalide' }) };
-    }
-
+    const { uid, body, erreur } = await preparerRequete(event);
+    if (erreur) return erreur;
     const { ecritureId, motif } = body;
-    if (!ecritureId || !motif) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'ecritureId et motif sont obligatoires' }) };
-    }
-
-    const adminApp = getAdminApp();
-    const db = getFirestore(adminApp);
-
-    // Lire l'écriture originale
-    const origRef = db.collection('ecritures').doc(ecritureId);
-    const origSnap = await origRef.get();
-    if (!origSnap.exists) {
-        return { statusCode: 404, body: JSON.stringify({ error: 'Écriture introuvable' }) };
-    }
-    const orig = origSnap.data();
-    if (orig.statut === 'annulee') {
-        return { statusCode: 409, body: JSON.stringify({ error: 'Cette écriture est déjà annulée' }) };
-    }
-
-    // Construire les mouvements inversés
-    const mouvementsInverses = (orig.mouvements ?? []).map((m) => ({
-        compte: m.compte,
-        libelle: m.libelle,
-        debit: m.credit,   // inversion débit ↔ crédit
-        credit: m.debit,
-    }));
-
-    // Vérification d'équilibre (redondante mais sécurisante)
-    const { ok } = verifierEquilibre(mouvementsInverses);
-    if (!ok) {
-        return { statusCode: 422, body: JSON.stringify({ error: 'Contre-passation déséquilibrée — contacter le support.' }) };
-    }
-
-    // Écriture de la contre-passation + marquage de l'originale — dans une seule transaction
-    const today = new Date().toISOString().split('T')[0];
-    let annulationId;
+    if (!ecritureId || !motif) return reponse(400, { error: 'ecritureId et motif sont obligatoires' });
 
     try {
+        const db = getDb();
+        let annulationId;
         await db.runTransaction(async (tx) => {
-            // Nouvelle écriture d'annulation
-            const annulRef = db.collection('ecritures').doc();
-            annulationId = annulRef.id;
-            tx.set(annulRef, {
-                journal: orig.journal,
-                date: new Date(today),
-                libelle: `CONTRE-PASSATION — ${orig.libelle} — ${motif}`,
-                mouvements: mouvementsInverses,
-                sourceType: 'contrepassation',
-                sourceId: ecritureId,
-                pieceRef: orig.pieceRef ?? null,
-                statut: 'active',
-                saisieMode: 'formulaire',
-                createdBy: uid,
-                createdAt: FieldValue.serverTimestamp(),
-            });
-
-            // Marquage de l'écriture originale
-            tx.update(origRef, {
-                statut: 'annulee',
-                annuleeParId: annulationId,
-                annuleeLeDate: FieldValue.serverTimestamp(),
-            });
+            const origRef = db.collection('ecritures').doc(ecritureId);
+            const snap = await tx.get(origRef);
+            if (!snap.exists) throw new ErreurCompta('Écriture introuvable', 404);
+            const orig = snap.data();
+            if (orig.statut !== 'active') throw new ErreurCompta('Cette écriture est déjà annulée.', 409);
+            const { dateVerrou } = await lireVerrou(tx);
+            annulationId = contrePasserDansTx(tx, origRef, orig, { motif, uid, date: dateCorrection(dateVerrou) });
         });
-
-        return {
-            statusCode: 200,
-            body: JSON.stringify({ ok: true, annulationId }),
-        };
+        return reponse(200, { ok: true, annulationId });
     } catch (err) {
-        console.error('[contrepasser] error:', err);
-        let errMsg = err.message || 'Erreur serveur lors de la contre-passation.';
-        if (err.code === 5 || err.message?.includes('NOT_FOUND')) {
-            errMsg = 'La base de données Firestore n\'est pas encore initialisée. Rendez-vous sur https://console.firebase.google.com/project/compta-4f163/firestore et cliquez sur « Créer une base de données ».';
-        } else if (err.code === 7 || err.message?.includes('Cloud Firestore API')) {
-            errMsg = 'La base Cloud Firestore n\'est pas encore activée sur votre projet Google compta-4f163. Rendez-vous sur https://console.firebase.google.com/project/compta-4f163/firestore pour la créer.';
-        }
-        return {
-            statusCode: 500,
-            body: JSON.stringify({ ok: false, error: errMsg }),
-        };
+        return erreurServeur(err, 'contrepasser');
     }
 };

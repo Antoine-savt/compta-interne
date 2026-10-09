@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getEcrituresActives, calculerBilan, hasEcrituresCache } from '../../services/comptaService';
+import { getEcrituresAvecANouveaux, calculerBilan, hasEcrituresCache } from '../../services/comptaService';
 import { formatMontant, formatDate, toISODate } from '../../services/helpers';
 import { DateInput } from '../../components/common/DateInput';
 
@@ -25,7 +25,7 @@ export default function Bilan() {
             setLoading(true);
         }
         try {
-            const data = await getEcrituresActives({ dateDebut, dateFin });
+            const data = await getEcrituresAvecANouveaux({ dateDebut, dateFin });
             setEcritures(data);
         } catch (err) {
             console.error('Erreur chargement écritures pour Bilan:', err);
@@ -271,7 +271,7 @@ export default function Bilan() {
                             {/* Dettes financières & Comptes courants d'associés (455x) */}
                             <div style={{ marginBottom: 12 }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>
-                                    <span>Comptes courants d'associés & Dettes financières (455x, 16x)</span>
+                                    <span>Dettes financières : emprunts, concours bancaires, comptes courants d'associés</span>
                                     <span style={{ color: 'var(--accent)' }}>
                                         {formatMontant(passif.dettesFinancieresCCA.reduce((s, c) => s + c.montant, 0))}
                                     </span>

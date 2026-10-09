@@ -175,7 +175,7 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
         try {
             const res = await contrepasser(targetId, motifCorrection.trim());
             setSuccessCorrection(`Écriture contre-passée avec succès (Réf: ${res.annulationId?.slice(0, 8)}).`);
-            setEcriture((prev) => ({ ...prev, statut: 'annulee', annuleeLeDate: new Date() }));
+            setEcriture((prev) => ({ ...prev, contrepasseeParId: res.annulationId, annuleeLeDate: new Date() }));
             setShowContrepasser(false);
             invalidateEcrituresCache();
         } catch (err) {
@@ -249,8 +249,8 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
                         </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span className={`badge ${ecriture?.statut === 'annulee' ? 'badge--danger' : 'badge--success'}`}>
-                            {ecriture?.statut === 'annulee' ? 'Annulée' : 'Comptabilisée'}
+                        <span className={`badge ${(ecriture?.statut === 'annulee' || ecriture?.contrepasseeParId) ? 'badge--danger' : 'badge--success'}`}>
+                            {(ecriture?.statut === 'annulee' || ecriture?.contrepasseeParId) ? 'Annulée' : 'Comptabilisée'}
                         </span>
                         <button
                             type="button"
@@ -527,7 +527,7 @@ export function ModalTransactionDetail({ ecritureId, initialEcriture, onClose })
                             </div>
 
                             {/* 4. Section Contre-passation / Correction (si besoin) */}
-                            {ecriture?.statut === 'active' && (
+                            {ecriture?.statut === 'active' && !ecriture?.contrepasseeParId && ecriture?.sourceType !== 'contrepassation' && (
                                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
                                     {!showContrepasser ? (
                                         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>

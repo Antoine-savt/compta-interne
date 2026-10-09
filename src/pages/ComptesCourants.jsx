@@ -12,10 +12,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-    collection, query, orderBy, getDocs, addDoc, doc, updateDoc, serverTimestamp, where
+    collection, query, orderBy, getDocs, getDoc, addDoc, doc, updateDoc, setDoc, serverTimestamp, where
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
+import { soldeCrediteurCompte } from '../services/comptaService';
 import { formatMontant, formatDate, toISODate } from '../services/helpers';
 import { FileUpload } from '../components/FileUpload';
 import { Tooltip } from '../components/Shared';
@@ -23,8 +24,20 @@ import { getCached, setCached } from '../services/dataCache';
 import { ModalModifierOperation } from '../components/ModalModifierOperation';
 import { DateInput } from '../components/common/DateInput';
 
-// Taux légal maximum d'intérêts déductibles pour les CCA (seuil d'alerte configuré à 4.00%)
-const TAUX_LEGAL_DEFECT_2026 = 4.00;
+// Retenues à la source sur intérêts de comptes courants versés à un associé personne physique
+// (prélèvement forfaitaire non libératoire art. 125 A CGI + prélèvements sociaux), reversées au SIE
+// avec la déclaration 2777. Taux modifiables : à vérifier chaque année (loi de financement de la Sécurité sociale).
+const TAUX_PFNL_DEFAUT = 12.8;
+const TAUX_PS_DEFAUT = 17.2;
+const COMPTE_RETENUES = '4422';
+
+/** Montant des intérêts porté au crédit du compte courant (455x). */
+function interetsSurCompteCourant(m) {
+    if (m.type !== 'interets') return 0;
+    if (!m.statut) return m.montant || 0; // anciens intérêts, crédités directement au 455x
+    if (m.statut === 'inscrit_compte') return m.versement?.net || 0;
+    return 0; // courus (4558) ou versés par virement
+}
 
 export default function ComptesCourants() {
     const [associes, setAssocies] = useState(() => getCached('associes') || []);
@@ -57,8 +70,13 @@ export default function ComptesCourants() {
     const [calcAssocieId, setCalcAssocieId] = useState('');
     const [calcDateDebut, setCalcDateDebut] = useState(`${new Date().getFullYear()}-01-01`);
     const [calcDateFin, setCalcDateFin] = useState(toISODate(new Date()));
-    const [calcTaux, setCalcTaux] = useState(TAUX_LEGAL_DEFECT_2026);
-    const [calcTauxLegalPlafond, setCalcTauxLegalPlafond] = useState(TAUX_LEGAL_DEFECT_2026);
+    const [calcTaux, setCalcTaux] = useState(0);
+    const [calcTauxLegalPlafond, setCalcTauxLegalPlafond] = useState('');
+    const [plafondsEnregistres, setPlafondsEnregistres] = useState({});
+    const [calcSeulementApportsRemuneres, setCalcSeulementApportsRemuneres] = useState(true);
+    // Versement des intérêts courus
+    const [versement, setVersement] = useState(null); // { mvt, mode, date, dispense, tauxPFNL, tauxPS }
+    const [versementEnCours, setVersementEnCours] = useState(false);
     const [comptabilisationEnCours, setComptabilisationEnCours] = useState(false);
     const [calcSuccess, setCalcSuccess] = useState('');
 
@@ -93,8 +111,13 @@ export default function ComptesCourants() {
             if (assList.length > 0 && !formAssocieId) {
                 setFormAssocieId(assList[0].id);
                 setCalcAssocieId(assList[0].id);
-                setCalcTaux(assList[0].tauxInteretCCA ?? TAUX_LEGAL_DEFECT_2026);
+                // Pas de taux par défaut : les intérêts ne sont dus que si une convention les prévoit
+                setCalcTaux(assList[0].tauxInteretCCA ?? 0);
             }
+
+            const confSnap = await getDoc(doc(db, 'settings', 'config'));
+            const plafonds = confSnap.exists() ? (confSnap.data().tauxPlafondCCA ?? {}) : {};
+            setPlafondsEnregistres(plafonds);
         } catch (e) {
             console.error('Erreur chargement CCA:', e);
         } finally {
@@ -126,8 +149,10 @@ export default function ComptesCourants() {
                 .filter((m) => m.type === 'remboursement')
                 .reduce((s, m) => s + (m.montant || 0), 0);
 
-            const totalInteretsComptabilises = mvtsA
-                .filter((m) => m.type === 'interets')
+            // Intérêts portés au compte courant (inscrits en compte) ; les intérêts courus restent en 4558
+            const totalInteretsComptabilises = mvtsA.reduce((s, m) => s + interetsSurCompteCourant(m), 0);
+            const interetsCourus = mvtsA
+                .filter((m) => m.type === 'interets' && m.statut === 'courus')
                 .reduce((s, m) => s + (m.montant || 0), 0);
 
             // Avances de frais rattachées
@@ -151,6 +176,7 @@ export default function ComptesCourants() {
                 totalApports,
                 totalRemboursementsCCA,
                 totalInteretsComptabilises,
+                interetsCourus,
                 totalAvancesFraisNonRemboursees,
                 totalAvancesFraisHistorique,
                 soldeTotal,
@@ -185,6 +211,9 @@ export default function ComptesCourants() {
                 type: m.type, // 'apport' | 'remboursement' | 'interets'
                 description: m.description,
                 montant: m.montant,
+                montantSurCompte: m.type === 'interets' ? interetsSurCompteCourant(m) : m.montant,
+                statutInterets: m.type === 'interets' ? (m.statut || 'inscrit_compte') : null,
+                versement: m.versement || null,
                 taux: m.taux ?? null,
                 ecritureId: m.ecritureId,
                 documentIds: m.documentIds ?? [],
@@ -262,11 +291,18 @@ export default function ComptesCourants() {
             const nomAssocie = `${ass.nom} ${ass.prenom || ''}`.trim();
             const dateStr = formDate;
 
-            // Tentative d'écriture comptable — en cas d'échec, on continue quand même
-            // pour que le mouvement CCA soit bien enregistré (l'écritureId restera null)
+            if (formType === 'remboursement') {
+                const solde = await soldeCrediteurCompte(compteCC, dateStr);
+                if (montantNum > solde + 0.005) {
+                    setFormError(`Le compte courant de ${nomAssocie} n'est créditeur que de ${formatMontant(Math.max(solde, 0))} au ${formatDate(dateStr)}. Un remboursement de ${formatMontant(montantNum)} le rendrait débiteur : c'est interdit pour un dirigeant de SAS (art. L227-12 C. com.) et assimilable à un prêt de la société pour un autre associé.`);
+                    setSavingMvt(false);
+                    return;
+                }
+            }
+
+            // Écriture comptable d'abord : si elle échoue, rien n'est enregistré (compta et suivi CCA restent alignés)
             let ecritureId = null;
-            let ecritureWarning = null;
-            try {
+            {
                 if (formType === 'apport') {
                     // APPORT : La société encaisse des fonds de l'associé
                     // Débit 512 (Banque) / Crédit 455x (Compte courant associé)
@@ -296,14 +332,9 @@ export default function ComptesCourants() {
                     });
                     ecritureId = res.ecritureId;
                 }
-            } catch (ecritureErr) {
-                // L'écriture comptable a échoué (ex: timeout, erreur réseau ou serveur),
-                // mais le mouvement CCA doit quand même être enregistré.
-                console.warn('[CCA] Écriture comptable non liée :', ecritureErr.message);
-                ecritureWarning = `Mouvement enregistré, mais l'écriture comptable n'a pas pu être liée : ${ecritureErr.message}`;
             }
 
-            // Enregistrer le mouvement dans Firestore (toujours, même sans ecritureId)
+            // Enregistrer le mouvement (uniquement si l'écriture comptable a bien été passée)
             const mvtDocRef = await addDoc(collection(db, 'ccaMouvements'), {
                 associeId: formAssocieId,
                 associeNom: nomAssocie,
@@ -336,11 +367,7 @@ export default function ComptesCourants() {
                 return next;
             });
 
-            if (ecritureWarning) {
-                setFormError(ecritureWarning);
-            } else {
-                setFormSuccess(`Opération de ${formType === 'apport' ? 'l\'apport' : 'remboursement'} enregistrée avec succès.`);
-            }
+            setFormSuccess(`Opération de ${formType === 'apport' ? 'l\'apport' : 'remboursement'} enregistrée avec succès.`);
             setFormMontant('');
             setFormDescription('');
             setFormDocIds([]);
@@ -365,13 +392,19 @@ export default function ComptesCourants() {
         if (!ass) return null;
 
         // Collecter tous les mouvements chronologiques de cet associé
+        // Base rémunérée : si demandé, seuls les apports assortis d'un taux portent intérêt
+        // (un apport sans convention d'intérêts, comme une avance ponctuelle, n'est pas rémunéré)
         const mvtsAss = mouvementsUnifies
             .filter((m) => m.associeId === calcAssocieId)
+            .filter((m) => !calcSeulementApportsRemuneres || m.type !== 'avance_frais')
+            .filter((m) => !calcSeulementApportsRemuneres || m.type !== 'apport' || (m.taux ?? 0) > 0)
             .map((m) => ({
                 date: m.date,
-                delta: m.type === 'apport' || m.type === 'avance_frais' || m.type === 'interets'
+                delta: m.type === 'apport' || m.type === 'avance_frais'
                     ? (m.statutAvance === 'annule' ? 0 : m.montant)
-                    : -m.montant,
+                    : m.type === 'interets'
+                        ? m.montantSurCompte
+                        : -m.montant,
                 description: m.description,
             }))
             .sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -380,10 +413,10 @@ export default function ComptesCourants() {
         let soldeCourant = 0;
         const timeline = [];
 
-        // Solde avant la date de début
+        // Solde avant la date de début (jamais négatif pour le calcul des intérêts)
         mvtsAss.forEach((m) => {
             if (m.date < dDebut) {
-                soldeCourant += m.delta;
+                soldeCourant = Math.max(0, soldeCourant + m.delta);
             }
         });
 
@@ -412,7 +445,7 @@ export default function ComptesCourants() {
                     interets: intTranche,
                 });
             }
-            soldeCourant += m.delta;
+            soldeCourant = Math.max(0, soldeCourant + m.delta);
             dateEtape = new Date(m.date);
         }
 
@@ -453,9 +486,11 @@ export default function ComptesCourants() {
         interetsBruts = +interetsBruts.toFixed(2);
         const soldeMoyenPondere = totalJours > 0 ? +(sommeProduitsPonderes / totalJours).toFixed(2) : soldeCourant;
 
-        // Comparaison avec le plafond fiscal déductible
-        const interetsDeductiblesMax = +(soldeMoyenPondere * (calcTauxLegalPlafond / 100) * (totalJours / 365)).toFixed(2);
-        const depassementNonDeductible = calcTaux > calcTauxLegalPlafond
+        // Comparaison avec le plafond fiscal déductible (inconnu tant qu'il n'est pas renseigné)
+        const plafond = parseFloat(calcTauxLegalPlafond);
+        const plafondConnu = !isNaN(plafond) && plafond > 0;
+        const interetsDeductiblesMax = plafondConnu ? +(soldeMoyenPondere * (plafond / 100) * (totalJours / 365)).toFixed(2) : interetsBruts;
+        const depassementNonDeductible = plafondConnu && calcTaux > plafond
             ? +Math.max(0, interetsBruts - interetsDeductiblesMax).toFixed(2)
             : 0;
 
@@ -467,16 +502,33 @@ export default function ComptesCourants() {
             interetsBruts,
             interetsDeductibles: Math.min(interetsBruts, interetsDeductiblesMax),
             depassementNonDeductible,
-            depassement: calcTaux > calcTauxLegalPlafond,
+            depassement: plafondConnu && calcTaux > plafond,
+            plafondConnu,
             timeline,
         };
-    }, [calcAssocieId, calcDateDebut, calcDateFin, calcTaux, calcTauxLegalPlafond, statsAssocies, mouvementsUnifies]);
+    }, [calcAssocieId, calcDateDebut, calcDateFin, calcTaux, calcTauxLegalPlafond, calcSeulementApportsRemuneres, statsAssocies, mouvementsUnifies]);
+
+    // Plafond enregistré pour l'exercice de la date de fin
+    const anneeCalcul = (calcDateFin || '').slice(0, 4);
+    useEffect(() => {
+        const p = plafondsEnregistres[anneeCalcul];
+        setCalcTauxLegalPlafond(p != null ? String(p) : '');
+    }, [anneeCalcul, plafondsEnregistres]);
+
+    async function enregistrerPlafond() {
+        const val = parseFloat(calcTauxLegalPlafond);
+        if (isNaN(val) || val <= 0) return;
+        const next = { ...plafondsEnregistres, [anneeCalcul]: val };
+        await setDoc(doc(db, 'settings', 'config'), { tauxPlafondCCA: next }, { merge: true });
+        setPlafondsEnregistres(next);
+        setCalcSuccess(`Taux plafond ${val} % enregistré pour l'exercice ${anneeCalcul}.`);
+    }
 
     // ─── Comptabilisation automatique des intérêts ──────────────────────────
     async function handleComptabiliserInterets() {
         if (!calculInterets || calculInterets.interetsBruts <= 0) return;
         const ass = calculInterets.associe;
-        const msg = `Comptabiliser ${formatMontant(calculInterets.interetsBruts)} d'intérêts de CCA pour ${ass.nom} ?\n\nÉcriture générée dans le journal OD :\n- Débit 6615 (Charges financières) : ${formatMontant(calculInterets.interetsBruts)}\n- Crédit ${ass.compteCC || '455'} (Compte courant ${ass.nom}) : ${formatMontant(calculInterets.interetsBruts)}`;
+        const msg = `Comptabiliser ${formatMontant(calculInterets.interetsBruts)} d'intérêts de CCA pour ${ass.nom} ?\n\nÉcriture générée dans le journal OD :\n- Débit 6615 (Intérêts des comptes courants) : ${formatMontant(calculInterets.interetsBruts)}\n- Crédit 4558 (Associés - intérêts courus) : ${formatMontant(calculInterets.interetsBruts)}\n\nLes intérêts seront ensuite à verser (virement ou inscription au compte courant), avec la retenue à la source.`;
 
         if (!window.confirm(msg)) return;
 
@@ -494,7 +546,7 @@ export default function ComptesCourants() {
                 sourceType: 'cca_interets',
                 mouvements: [
                     { compte: '6615', libelle: `Intérêts CCA — ${ass.nom}`, debit: calculInterets.interetsBruts, credit: 0 },
-                    { compte: ass.compteCC || '455', libelle: `Compte courant ${ass.nom}`, debit: 0, credit: calculInterets.interetsBruts },
+                    { compte: '4558', libelle: `Intérêts courus — ${ass.nom}`, debit: 0, credit: calculInterets.interetsBruts },
                 ],
             });
 
@@ -503,6 +555,7 @@ export default function ComptesCourants() {
                 associeId: ass.id,
                 associeNom: `${ass.nom} ${ass.prenom || ''}`.trim(),
                 type: 'interets',
+                statut: 'courus',
                 montant: calculInterets.interetsBruts,
                 dateMouvement: new Date(dateEcriture),
                 description: libelle,
@@ -515,12 +568,64 @@ export default function ComptesCourants() {
                 createdAt: serverTimestamp(),
             });
 
-            setCalcSuccess(`Intérêts comptabilisés avec succès ! Écriture ${ecritureId} générée.`);
+            setCalcSuccess(`Intérêts comptabilisés en charges (${formatMontant(calculInterets.interetsBruts)}, compte 4558). Versez-les ci-dessous le moment venu.`);
             loadData();
         } catch (e) {
             alert('Erreur comptabilisation : ' + e.message);
         } finally {
             setComptabilisationEnCours(false);
+        }
+    }
+
+    // ─── Versement des intérêts courus (virement ou inscription au compte courant) ───
+    const interetsAVerser = mouvements.filter((m) => m.type === 'interets' && m.statut === 'courus');
+
+    function ouvrirVersement(mvt) {
+        setVersement({ mvt, mode: 'virement', date: toISODate(new Date()), dispense: false, tauxPFNL: TAUX_PFNL_DEFAUT, tauxPS: TAUX_PS_DEFAUT });
+    }
+
+    const calculVersement = versement ? (() => {
+        const brut = versement.mvt.montant || 0;
+        const pfnl = versement.dispense ? 0 : +(brut * (parseFloat(versement.tauxPFNL) || 0) / 100).toFixed(2);
+        const ps = +(brut * (parseFloat(versement.tauxPS) || 0) / 100).toFixed(2);
+        return { brut, pfnl, ps, net: +(brut - pfnl - ps).toFixed(2) };
+    })() : null;
+
+    async function handleVerserInterets() {
+        const { mvt, mode, date } = versement;
+        const { brut, pfnl, ps, net } = calculVersement;
+        const ass = associes.find((a) => a.id === mvt.associeId);
+        const nom = ass ? `${ass.nom} ${ass.prenom || ''}`.trim() : mvt.associeNom;
+        const compteCC = ass?.compteCC || '455';
+        setVersementEnCours(true);
+        try {
+            const { ecritureId } = await ecrireEcriture({
+                journal: mode === 'virement' ? 'BQ' : 'OD',
+                date,
+                libelle: `${mode === 'virement' ? 'Versement' : 'Inscription en compte courant'} des intérêts CCA — ${nom}`,
+                sourceType: 'cca_interets_versement',
+                sourceId: mvt.id,
+                mouvements: [
+                    { compte: '4558', libelle: `Intérêts courus — ${nom}`, debit: brut, credit: 0 },
+                    ...(pfnl > 0 ? [{ compte: COMPTE_RETENUES, libelle: `Prélèvement forfaitaire ${versement.tauxPFNL} % — à reverser (2777)`, debit: 0, credit: pfnl }] : []),
+                    ...(ps > 0 ? [{ compte: COMPTE_RETENUES, libelle: `Prélèvements sociaux ${versement.tauxPS} % — à reverser (2777)`, debit: 0, credit: ps }] : []),
+                    mode === 'virement'
+                        ? { compte: '512', libelle: `Banque — intérêts nets ${nom}`, debit: 0, credit: net }
+                        : { compte: compteCC, libelle: `Compte courant ${nom} — intérêts nets`, debit: 0, credit: net },
+                ],
+            });
+            await updateDoc(doc(db, 'ccaMouvements', mvt.id), {
+                statut: mode === 'virement' ? 'verse_virement' : 'inscrit_compte',
+                versement: { date, mode, brut, pfnl, ps, net, tauxPFNL: versement.dispense ? 0 : parseFloat(versement.tauxPFNL), tauxPS: parseFloat(versement.tauxPS), dispensePFNL: versement.dispense, ecritureId },
+                updatedAt: serverTimestamp(),
+            });
+            setCalcSuccess(`Intérêts de ${nom} ${mode === 'virement' ? 'versés' : 'inscrits au compte courant'} : ${formatMontant(net)} net. Retenues à reverser au SIE avec la déclaration 2777 avant le 15 du mois suivant : ${formatMontant(pfnl + ps)}.`);
+            setVersement(null);
+            loadData();
+        } catch (e) {
+            alert('Erreur lors du versement : ' + e.message);
+        } finally {
+            setVersementEnCours(false);
         }
     }
 
@@ -701,7 +806,7 @@ export default function ComptesCourants() {
                                     value={formTaux}
                                     onChange={(e) => setFormTaux(e.target.value)}
                                 />
-                                <div className="form-hint">Plafond légal indicatif : {TAUX_LEGAL_DEFECT_2026} %</div>
+                                <div className="form-hint">Laisser vide si l'apport n'est pas rémunéré (aucune convention d'intérêts).</div>
                             </div>
                         </div>
 
@@ -988,7 +1093,7 @@ export default function ComptesCourants() {
                                                             }}
                                                             onClick={() => setSelectedEditOperation({
                                                                 sourceId: m.id,
-                                                                sourceType: m.type === 'apport' ? 'cca_apport' : 'cca_remboursement',
+                                                                sourceType: m.type === 'apport' ? 'cca_apport' : m.type === 'remboursement' ? 'cca_remboursement' : 'cca_interets',
                                                                 ecritureId: m.ecritureId || null,
                                                             })}
                                                             title="Options (Modifier)"
@@ -1026,7 +1131,7 @@ export default function ComptesCourants() {
                                     onChange={(e) => {
                                         setCalcAssocieId(e.target.value);
                                         const ass = associes.find((a) => a.id === e.target.value);
-                                        if (ass?.tauxInteretCCA) setCalcTaux(ass.tauxInteretCCA);
+                                        setCalcTaux(ass?.tauxInteretCCA ?? 0);
                                     }}
                                 >
                                     {associes.map((a) => (
@@ -1077,17 +1182,41 @@ export default function ComptesCourants() {
                                     Plafond légal déductible (BOFiP / TMP %)
                                     <Tooltip text="Taux maximal d'intérêts déductibles des comptes courants d'associés publié par l'administration fiscale au Bulletin Officiel des Finances Publiques." />
                                 </label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    className="form-input"
-                                    value={calcTauxLegalPlafond}
-                                    onChange={(e) => setCalcTauxLegalPlafond(parseFloat(e.target.value) || 0)}
-                                />
-                                <div className="form-hint">Référence CGI Art. 39-1-3°</div>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        className="form-input"
+                                        placeholder="Taux publié pour l'exercice"
+                                        value={calcTauxLegalPlafond}
+                                        onChange={(e) => setCalcTauxLegalPlafond(e.target.value)}
+                                    />
+                                    <button type="button" className="btn btn--ghost btn--sm" onClick={enregistrerPlafond} disabled={!(parseFloat(calcTauxLegalPlafond) > 0)}>
+                                        Mémoriser pour {anneeCalcul}
+                                    </button>
+                                </div>
+                                <div className="form-hint">
+                                    Art. 39-1-3° CGI : taux publié chaque trimestre au BOFiP (BOI-BIC-CHG-50-50-30), à retenir selon la date de clôture de l'exercice.
+                                    Les intérêts ne sont déductibles que si le capital est entièrement libéré.
+                                </div>
                             </div>
                         </div>
+
+                        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginBottom: 8, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={calcSeulementApportsRemuneres} onChange={(e) => setCalcSeulementApportsRemuneres(e.target.checked)} />
+                            Ne rémunérer que les apports assortis d'un taux (les apports sans convention d'intérêts sont exclus)
+                        </label>
+                        {calcTaux <= 0 && (
+                            <div className="notice notice--info">
+                                Aucun taux convenu pour cet associé : pas d'intérêts à comptabiliser. Des intérêts ne sont dus que si une convention de compte courant les prévoit.
+                            </div>
+                        )}
+                        {calcTaux > 0 && !calculInterets?.plafondConnu && (
+                            <div className="notice notice--warning">
+                                Renseignez le taux plafond déductible de l'exercice {anneeCalcul} pour vérifier la part déductible des intérêts.
+                            </div>
+                        )}
 
                         {/* Résultats du calcul */}
                         {calculInterets && (
@@ -1172,16 +1301,93 @@ export default function ComptesCourants() {
                                     <div>
                                         <div style={{ fontWeight: 600 }}>Comptabiliser ces intérêts en charges financières</div>
                                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                                            Génère l'écriture Débit <code>6615</code> / Crédit <code>{calculInterets.associe.compteCC || '455'}</code> dans le journal OD à la date du {formatDate(calcDateFin)}.
+                                            Génère l'écriture Débit <code>6615</code> / Crédit <code>4558</code> (intérêts courus) dans le journal OD à la date du {formatDate(calcDateFin)}.
                                         </div>
                                     </div>
                                     <button
                                         className="btn btn--primary"
-                                        disabled={comptabilisationEnCours || calculInterets.interetsBruts <= 0}
+                                        disabled={comptabilisationEnCours || calculInterets.interetsBruts <= 0 || calcTaux <= 0}
                                         onClick={handleComptabiliserInterets}
                                     >
                                         {comptabilisationEnCours ? 'Génération en cours...' : `Comptabiliser ${formatMontant(calculInterets.interetsBruts)}`}
                                     </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Intérêts courus à verser */}
+                    <div className="card">
+                        <div className="card__title">Intérêts courus à verser</div>
+                        {interetsAVerser.length === 0 ? (
+                            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucun intérêt en attente de versement.</div>
+                        ) : (
+                            <div className="table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr><th>Associé</th><th>Période</th><th style={{ textAlign: 'right' }}>Intérêts bruts</th><th></th></tr>
+                                    </thead>
+                                    <tbody>
+                                        {interetsAVerser.map((m) => (
+                                            <tr key={m.id}>
+                                                <td>{m.associeNom}</td>
+                                                <td style={{ fontSize: 12 }}>{m.description}</td>
+                                                <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMontant(m.montant)}</td>
+                                                <td style={{ textAlign: 'right' }}>
+                                                    <button className="btn btn--primary btn--sm" onClick={() => ouvrirVersement(m)}>Verser</button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        {versement && calculVersement && (
+                            <div style={{ marginTop: 16, padding: 16, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                                <div style={{ fontWeight: 600, marginBottom: 10 }}>Versement des intérêts de {versement.mvt.associeNom}</div>
+                                <div className="form-row--3">
+                                    <div className="form-group">
+                                        <label className="form-label">Mode</label>
+                                        <select className="form-select" value={versement.mode} onChange={(e) => setVersement((v) => ({ ...v, mode: e.target.value }))}>
+                                            <option value="virement">Virement à l'associé</option>
+                                            <option value="compte">Inscription au compte courant</option>
+                                        </select>
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Date</label>
+                                        <DateInput className="form-input" value={versement.date} onChange={(e) => setVersement((v) => ({ ...v, date: e.target.value }))} />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Prélèvements sociaux (%)</label>
+                                        <input type="number" step="0.1" className="form-input" value={versement.tauxPS} onChange={(e) => setVersement((v) => ({ ...v, tauxPS: e.target.value }))} />
+                                    </div>
+                                </div>
+                                <div className="form-row">
+                                    <div className="form-group">
+                                        <label className="form-label">Prélèvement forfaitaire non libératoire (%)</label>
+                                        <input type="number" step="0.1" className="form-input" value={versement.tauxPFNL} disabled={versement.dispense} onChange={(e) => setVersement((v) => ({ ...v, tauxPFNL: e.target.value }))} />
+                                    </div>
+                                    <div className="form-group" style={{ display: 'flex', alignItems: 'flex-end' }}>
+                                        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer' }}>
+                                            <input type="checkbox" checked={versement.dispense} onChange={(e) => setVersement((v) => ({ ...v, dispense: e.target.checked }))} />
+                                            Dispense de prélèvement forfaitaire (attestation de l'associé, revenu fiscal sous le seuil)
+                                        </label>
+                                    </div>
+                                </div>
+                                <div style={{ fontSize: 13, marginBottom: 10 }}>
+                                    Brut {formatMontant(calculVersement.brut)} − retenues {formatMontant(calculVersement.pfnl + calculVersement.ps)} = <strong>net {formatMontant(calculVersement.net)}</strong>
+                                    {versement.mode === 'compte' ? ' porté au compte courant.' : ' à virer à l\'associé.'}
+                                    <div className="form-hint">
+                                        Les retenues ({COMPTE_RETENUES}) sont à reverser au service des impôts avec la déclaration 2777 avant le 15 du mois suivant,
+                                        puis à déclarer sur l'IFU (2561) en début d'année suivante. Taux des prélèvements sociaux à vérifier chaque année.
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button className="btn btn--primary" onClick={handleVerserInterets} disabled={versementEnCours || calculVersement.net <= 0}>
+                                        {versementEnCours ? 'Enregistrement...' : 'Enregistrer le versement'}
+                                    </button>
+                                    <button className="btn btn--ghost" onClick={() => setVersement(null)}>Annuler</button>
                                 </div>
                             </div>
                         )}

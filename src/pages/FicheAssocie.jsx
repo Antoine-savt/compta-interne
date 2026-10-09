@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ecrireEcriture } from '../services/api';
-import { formatMontant, formatDate } from '../services/helpers';
+import { formatMontant, formatDate, toISODate } from '../services/helpers';
 import { getCached, setCached } from '../services/dataCache';
 
 const ROLES = {
@@ -97,7 +97,7 @@ export default function FicheAssocie() {
         if (!window.confirm(`Enregistrer le remboursement de ${formatMontant(avance.montant)} à ${associe.nom} ?`)) return;
         setSaving(avance.id);
         try {
-            const today = new Date().toISOString().split('T')[0];
+            const today = toISODate(new Date());
             const { ecritureId } = await ecrireEcriture({
                 journal: 'BQ',
                 date: today,
@@ -128,7 +128,7 @@ export default function FicheAssocie() {
         if (!window.confirm(`Enregistrer le versement du dividende de ${formatMontant(div.montant)} à ${associe.nom} ?`)) return;
         setSaving(div.id);
         try {
-            const today = new Date().toISOString().split('T')[0];
+            const today = toISODate(new Date());
             const { ecritureId } = await ecrireEcriture({
                 journal: 'BQ',
                 date: today,

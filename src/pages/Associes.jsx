@@ -88,9 +88,13 @@ export default function Associes() {
 
     /** Attribue automatiquement le prochain sous-compte 455x */
     function prochainCompteCC() {
-        const indices = associes.map((a) => parseInt(a.compteCC ?? '4550')).filter(Boolean);
-        const max = indices.length ? Math.max(...indices) : 4550;
-        return String(max + 1);
+        // 4551 à 4557, puis 45510, 45511... : 4558 est réservé aux intérêts courus et 4560+ sort du compte 455
+        const utilises = new Set(associes.map((a) => String(a.compteCC ?? '')));
+        const candidats = [
+            ...Array.from({ length: 7 }, (_, i) => String(4551 + i)),
+            ...Array.from({ length: 90 }, (_, i) => String(45510 + i)),
+        ];
+        return candidats.find((c) => !utilises.has(c)) ?? '455';
     }
 
     function openNew() {

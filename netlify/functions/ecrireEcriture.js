@@ -9,11 +9,11 @@
  *
  * Body JSON attendu :
  * {
- *   journal:    "VE" | "AC" | "BQ" | "OD",
+ *   journal:    "VT" | "AC" | "BQ" | "OD",
  *   date:       "2026-09-11",          // ISO 8601
  *   libelle:    "Facture 2026-001 – Client XYZ",
  *   pieceRef?:  "2026-001",
- *   sourceType: "facture" | "depense" | "manuel" | "contrepassation",
+ *   sourceType: "facturation" | "depense" | "manuel" | ...,
  *   sourceId?:  "docId",
  *   mouvements: [
  *     { compte: "411", libelle: "Client XYZ",              debit: 120, credit: 0   },
@@ -21,133 +21,34 @@
  *   ]
  * }
  *
+ * Contrôles : équilibre, comptes, montants, date hors période validée.
  * Réponse 200 : { ok: true, ecritureId: "xxx" }
- * Réponse 422 : { ok: false, error: "Écriture déséquilibrée : débit 120, crédit 130" }
  */
+import {
+    getDb, preparerRequete, reponse, erreurServeur, controlerEcriture,
+    lireVerrou, controlerPeriodeOuverte, nouvelleEcriture,
+} from '../lib/compta.js';
 
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-
-// ─── Initialisation Firebase Admin (singleton) ────────────────────────────────
-function getAdminApp() {
-    if (getApps().length > 0) return getApps()[0];
-    const serviceAccount = JSON.parse(
-        Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8')
-    );
-    return initializeApp({ credential: cert(serviceAccount) });
-}
-
-// ─── Logique pure — testable sans serveur ─────────────────────────────────────
-
-/**
- * Vérifie que la somme des débits == somme des crédits.
- * @param {Array<{debit: number, credit: number}>} mouvements
- * @returns {{ ok: boolean, totalDebit: number, totalCredit: number }}
- */
-export function verifierEquilibre(mouvements) {
-    const totalDebit = mouvements.reduce((acc, m) => acc + (m.debit ?? 0), 0);
-    const totalCredit = mouvements.reduce((acc, m) => acc + (m.credit ?? 0), 0);
-    const ok = Math.abs(totalDebit - totalCredit) < 0.001; // tolérance arrondi flottant
-    return { ok, totalDebit, totalCredit };
-}
-
-// ─── Handler Netlify ─────────────────────────────────────────────────────────
+export { verifierEquilibre } from '../lib/compta.js';
 
 export const handler = async (event) => {
-    // Méthode
-    if (event.httpMethod !== 'POST') {
-        return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
-    }
+    const { uid, body, erreur } = await preparerRequete(event);
+    if (erreur) return erreur;
+    if (!body.sourceType) return reponse(400, { error: 'sourceType obligatoire' });
 
-    // Auth — vérification du token Firebase
-    const authHeader = event.headers['authorization'] ?? '';
-    const idToken = authHeader.replace('Bearer ', '').trim();
-    if (!idToken) {
-        return { statusCode: 401, body: JSON.stringify({ error: 'Token manquant' }) };
-    }
-
-    let uid;
     try {
-        const adminApp = getAdminApp();
-        const { getAuth } = await import('firebase-admin/auth');
-        const decoded = await getAuth(adminApp).verifyIdToken(idToken);
-        uid = decoded.uid;
-    } catch {
-        return { statusCode: 401, body: JSON.stringify({ error: 'Token invalide' }) };
-    }
-
-    // Parse body
-    let body;
-    try {
-        body = JSON.parse(event.body ?? '{}');
-    } catch {
-        return { statusCode: 400, body: JSON.stringify({ error: 'Body JSON invalide' }) };
-    }
-
-    const { journal, date, libelle, mouvements, sourceType, sourceId, pieceRef } = body;
-
-    // Validation champs obligatoires
-    if (!journal || !date || !libelle || !Array.isArray(mouvements) || mouvements.length < 2) {
-        return {
-            statusCode: 400,
-            body: JSON.stringify({ error: 'Champs obligatoires manquants (journal, date, libelle, mouvements ≥ 2)' }),
-        };
-    }
-    if (!sourceType) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'sourceType obligatoire' }) };
-    }
-
-    // ── GARDE-FOU : équilibre débit/crédit ────────────────────────────────────
-    const { ok, totalDebit, totalCredit } = verifierEquilibre(mouvements);
-    if (!ok) {
-        return {
-            statusCode: 422,
-            body: JSON.stringify({
-                ok: false,
-                error: `Écriture déséquilibrée : débit ${totalDebit.toFixed(2)} €, crédit ${totalCredit.toFixed(2)} €. Aucune écriture n'a été créée.`,
-            }),
-        };
-    }
-
-    // ── Écriture Firestore dans une transaction atomique ──────────────────────
-    try {
-        const adminApp = getAdminApp();
-        const db = getFirestore(adminApp);
-
+        const mouvements = controlerEcriture(body);
+        const db = getDb();
         let ecritureId;
         await db.runTransaction(async (tx) => {
+            const { dateVerrou } = await lireVerrou(tx);
+            controlerPeriodeOuverte(body.date, dateVerrou);
             const ref = db.collection('ecritures').doc();
             ecritureId = ref.id;
-            tx.set(ref, {
-                journal,
-                date: new Date(date),
-                libelle,
-                mouvements,
-                sourceType,
-                sourceId: sourceId ?? null,
-                pieceRef: pieceRef ?? null,
-                statut: 'active',
-                saisieMode: sourceType === 'manuel' ? 'manuel' : 'formulaire',
-                createdBy: uid,
-                createdAt: FieldValue.serverTimestamp(),
-            });
+            tx.set(ref, nouvelleEcriture({ ...body, mouvements }, uid));
         });
-
-        return {
-            statusCode: 200,
-            body: JSON.stringify({ ok: true, ecritureId }),
-        };
+        return reponse(200, { ok: true, ecritureId });
     } catch (err) {
-        console.error('[ecrireEcriture] Firestore error:', err);
-        let errMsg = err.message || 'Erreur serveur lors de l\'écriture en base.';
-        if (err.code === 5 || err.message?.includes('NOT_FOUND')) {
-            errMsg = 'La base de données Firestore n\'est pas encore initialisée. Rendez-vous sur https://console.firebase.google.com/project/compta-4f163/firestore et cliquez sur « Créer une base de données ».';
-        } else if (err.code === 7 || err.message?.includes('Cloud Firestore API')) {
-            errMsg = 'La base Cloud Firestore n\'est pas encore activée sur votre projet Google compta-4f163. Rendez-vous sur https://console.firebase.google.com/project/compta-4f163/firestore pour la créer.';
-        }
-        return {
-            statusCode: 500,
-            body: JSON.stringify({ ok: false, error: errMsg }),
-        };
+        return erreurServeur(err, 'ecrireEcriture');
     }
 };

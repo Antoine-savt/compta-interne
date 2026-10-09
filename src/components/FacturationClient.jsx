@@ -18,6 +18,7 @@ import { ecrireEcriture } from '../services/api';
 import { formatMontant, formatDate, toISODate } from '../services/helpers';
 import { FileUpload } from './FileUpload';
 import { DateInput } from './common/DateInput';
+import { useRegimeTVA, tvaDepuisHT, MENTION_FRANCHISE } from '../services/tva';
 
 export const RECURRENCES = [
     { value: 'unique', label: 'Ponctuel (une fois)', coefMRR: 0 },
@@ -127,9 +128,13 @@ export function FacturationClient() {
 
     // Calculs en live
     const { totalOneShot, mrr } = computeTotaux(lignes);
-    const totalFacture = totalOneShot + lignes
+    const totalHT = totalOneShot + lignes
         .filter((l) => l.recurrence !== 'unique')
         .reduce((s, l) => s + (parseFloat(l.prixUnitaire) || 0) * (parseFloat(l.quantite) || 1), 0);
+    // Prix saisis HT ; en franchise de TVA, HT = TTC. totalFacture = montant dû par le client (TTC)
+    const regimeTVA = useRegimeTVA();
+    const tauxTVAVente = regimeTVA.franchise ? 0 : regimeTVA.taux;
+    const { tva: totalTVA, ttc: totalFacture } = tvaDepuisHT(totalHT, tauxTVAVente);
 
     const stripeNet = parseFloat(stripe.net) || parseFloat(stripe.brut) - parseFloat(stripe.frais) || 0;
     const strapeBrut = parseFloat(stripe.brut) || 0;
@@ -191,7 +196,8 @@ export function FacturationClient() {
                 sourceType: 'facturation',
                 mouvements: [
                     { compte: '411', libelle: clientSelectionne?.nom || 'Clients', debit: totalFacture, credit: 0 },
-                    { compte: '706', libelle: 'Prestations de services', debit: 0, credit: totalFacture },
+                    { compte: '706', libelle: 'Prestations de services', debit: 0, credit: totalHT },
+                    ...(totalTVA > 0 ? [{ compte: '44571', libelle: `TVA collectée (${tauxTVAVente} %)`, debit: 0, credit: totalTVA }] : []),
                 ],
             });
 
@@ -267,6 +273,11 @@ export function FacturationClient() {
                 totalOneShot,
                 mrr,
                 totalFacture,
+                totalHT,
+                totalTVA,
+                totalTTC: totalFacture,
+                tvaActive: totalTVA > 0,
+                tauxTVA: totalTVA > 0 ? tauxTVAVente : null,
                 withStripe: withPayment && modePaiement === 'stripe',
                 stripe: (withPayment && modePaiement === 'stripe')
                     ? { brut: strapeBrut, frais: stripeFrags, net: stripeNet }
@@ -505,7 +516,14 @@ export function FacturationClient() {
                         {mrr > 0 && <SummaryBox label="Projection 3 ans" value={formatMontant(mrr * 36 + totalOneShot)} />}
                     </div>
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Total facture (1ère période)</span>
+                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                            Total facture (1ère période)
+                            <span style={{ display: 'block', fontSize: 11 }}>
+                                {totalTVA > 0
+                                    ? `${formatMontant(totalHT)} HT + ${formatMontant(totalTVA)} TVA (${tauxTVAVente} %)`
+                                    : MENTION_FRANCHISE}
+                            </span>
+                        </span>
                         <span style={{ fontSize: 18, fontWeight: 700 }}>{formatMontant(totalFacture)}</span>
                     </div>
                 </div>
@@ -715,8 +733,8 @@ export function FacturationClient() {
                             </thead>
                             <tbody>
                                 <tr>
-                                    <td rowSpan={2} style={{ fontSize: 12 }}>{formatDate(date)}</td>
-                                    <td rowSpan={2} style={{ fontWeight: 600, fontSize: 11 }}>VT</td>
+                                    <td rowSpan={totalTVA > 0 ? 3 : 2} style={{ fontSize: 12 }}>{formatDate(date)}</td>
+                                    <td rowSpan={totalTVA > 0 ? 3 : 2} style={{ fontWeight: 600, fontSize: 11 }}>VT</td>
                                     <td><code>411</code></td>
                                     <td>Clients</td>
                                     <td style={{ textAlign: 'right' }}>{formatMontant(totalFacture)}</td>
@@ -726,8 +744,16 @@ export function FacturationClient() {
                                     <td><code>706</code></td>
                                     <td>Prestations de services</td>
                                     <td style={{ textAlign: 'right' }}>—</td>
-                                    <td style={{ textAlign: 'right' }}>{formatMontant(totalFacture)}</td>
+                                    <td style={{ textAlign: 'right' }}>{formatMontant(totalHT)}</td>
                                 </tr>
+                                {totalTVA > 0 && (
+                                    <tr>
+                                        <td><code>44571</code></td>
+                                        <td>TVA collectée</td>
+                                        <td style={{ textAlign: 'right' }}>—</td>
+                                        <td style={{ textAlign: 'right' }}>{formatMontant(totalTVA)}</td>
+                                    </tr>
+                                )}
 
                                 {withPayment && (
                                     <>
