@@ -65,7 +65,7 @@ export default function ModalManageGestionnaires({ gestionnaires, onClose, onSav
                 style={{
                     maxWidth: 480,
                     width: '92%',
-                    background: '#ffffff',
+                    background: 'var(--surface)',
                     borderRadius: 10,
                     boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.2)',
                     overflow: 'hidden',
@@ -76,19 +76,19 @@ export default function ModalManageGestionnaires({ gestionnaires, onClose, onSav
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Entête */}
-                <div style={{ padding: '18px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>
+                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
                             Gérer les gestionnaires
                         </h3>
-                        <p style={{ margin: '2px 0 0', fontSize: 12, color: '#64748b' }}>
+                        <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
                             Personnalisez les personnes en charge des contacts et clients.
                         </p>
                     </div>
                     <button
                         type="button"
                         onClick={onClose}
-                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, color: '#94a3b8', padding: '4px 8px' }}
+                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, color: 'var(--text-light)', padding: '4px 8px' }}
                     >
                         ✕
                     </button>
@@ -113,13 +113,13 @@ export default function ModalManageGestionnaires({ gestionnaires, onClose, onSav
                     </form>
 
                     {/* Liste */}
-                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#94a3b8' }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-light)' }}>
                         Gestionnaires actuels ({list.length})
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
                         {list.length === 0 ? (
-                            <div style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', padding: '16px 0' }}>
+                            <div style={{ color: 'var(--text-light)', fontSize: 12, textAlign: 'center', padding: '16px 0' }}>
                                 Aucun gestionnaire configuré.
                             </div>
                         ) : (
@@ -130,8 +130,8 @@ export default function ModalManageGestionnaires({ gestionnaires, onClose, onSav
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: 8,
-                                        background: '#f8fafc',
-                                        border: '1px solid #e2e8f0',
+                                        background: 'var(--bg2)',
+                                        border: '1px solid var(--border)',
                                         borderRadius: 6,
                                         padding: '4px 8px',
                                     }}
@@ -149,7 +149,7 @@ export default function ModalManageGestionnaires({ gestionnaires, onClose, onSav
                                         style={{
                                             border: 'none',
                                             background: 'transparent',
-                                            color: '#ef4444',
+                                            color: 'var(--danger)',
                                             cursor: 'pointer',
                                             fontSize: 14,
                                             padding: '2px 6px',
@@ -166,7 +166,7 @@ export default function ModalManageGestionnaires({ gestionnaires, onClose, onSav
                 </div>
 
                 {/* Footer */}
-                <div style={{ padding: '12px 20px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                <div style={{ padding: '12px 20px', background: 'var(--bg2)', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                     <button type="button" className="btn btn--ghost btn--sm" onClick={onClose} disabled={saving}>
                         Annuler
                     </button>

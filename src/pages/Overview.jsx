@@ -301,7 +301,7 @@ export default function Overview() {
                         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 6 }}>
                             Trésorerie disponible (Compte 512 — Banque)
                         </div>
-                        <div style={{ fontSize: 32, fontWeight: 800, color: tresorerieBanque >= 0 ? '#0f172a' : 'var(--danger)', letterSpacing: '-0.5px' }}>
+                        <div style={{ fontSize: 32, fontWeight: 800, color: tresorerieBanque >= 0 ? 'var(--text)' : 'var(--danger)', letterSpacing: '-0.5px' }}>
                             {formatMontant(tresorerieBanque)}
                         </div>
                         <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>

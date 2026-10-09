@@ -198,7 +198,22 @@ const SECTIONS_CONFIG = [
     },
 ];
 
-function Sidebar({ isCollapsed, onToggleCollapse, isMobileOpen, onCloseMobile, theme, onToggleTheme }) {
+// Sous ce seuil (téléphone + tablette portrait), la sidebar devient un tiroir
+const DRAWER_QUERY = '(max-width: 1024px)';
+
+function useMediaQuery(query) {
+    const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+    useEffect(() => {
+        const mql = window.matchMedia(query);
+        const onChange = (e) => setMatches(e.matches);
+        setMatches(mql.matches);
+        mql.addEventListener('change', onChange);
+        return () => mql.removeEventListener('change', onChange);
+    }, [query]);
+    return matches;
+}
+
+function Sidebar({ isCollapsed, onToggleCollapse, isDrawer, isMobileOpen, onCloseMobile, theme, onToggleTheme }) {
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -229,6 +244,20 @@ function Sidebar({ isCollapsed, onToggleCollapse, isMobileOpen, onCloseMobile, t
                 ) : (
                     <div className="sidebar__logo" style={{ fontSize: 18 }}>C<span>.</span></div>
                 )}
+                {isDrawer ? (
+                    <button
+                        type="button"
+                        className="sidebar__toggle-btn"
+                        onClick={onCloseMobile}
+                        title="Fermer le menu"
+                        aria-label="Fermer le menu"
+                    >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                ) : (
                 <button
                     type="button"
                     className="sidebar__toggle-btn"
@@ -248,6 +277,7 @@ function Sidebar({ isCollapsed, onToggleCollapse, isMobileOpen, onCloseMobile, t
                         </svg>
                     )}
                 </button>
+                )}
             </div>
 
             {/* Navigation principale */}
@@ -395,6 +425,9 @@ function AppLayout() {
 
     // Mobile drawer state
     const [isMobileOpen, setIsMobileOpen] = useState(false);
+    const isDrawer = useMediaQuery(DRAWER_QUERY);
+    // En mode tiroir, la sidebar est toujours affichée dépliée
+    const effectiveCollapsed = isCollapsed && !isDrawer;
 
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
@@ -413,6 +446,24 @@ function AppLayout() {
     useEffect(() => {
         setIsMobileOpen(false);
     }, [location.pathname]);
+
+    // Refermer le tiroir si on repasse en affichage bureau
+    useEffect(() => {
+        if (!isDrawer) setIsMobileOpen(false);
+    }, [isDrawer]);
+
+    // Bloquer le défilement de la page quand le tiroir est ouvert
+    useEffect(() => {
+        if (!isMobileOpen) return;
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        const onKey = (e) => { if (e.key === 'Escape') setIsMobileOpen(false); };
+        window.addEventListener('keydown', onKey);
+        return () => {
+            document.body.style.overflow = prev;
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [isMobileOpen]);
 
     function toggleTheme() {
         setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
@@ -444,6 +495,7 @@ function AppLayout() {
                     className="sidebar__toggle-btn"
                     onClick={toggleTheme}
                     title={theme === 'dark' ? 'Mode clair' : 'Mode sombre'}
+                    aria-label={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
                 >
                     {theme === 'dark' ? (
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -473,8 +525,9 @@ function AppLayout() {
 
             {/* Sidebar principale */}
             <Sidebar
-                isCollapsed={isCollapsed}
+                isCollapsed={effectiveCollapsed}
                 onToggleCollapse={toggleSidebar}
+                isDrawer={isDrawer}
                 isMobileOpen={isMobileOpen}
                 onCloseMobile={() => setIsMobileOpen(false)}
                 theme={theme}
@@ -482,7 +535,7 @@ function AppLayout() {
             />
 
             {/* Contenu principal */}
-            <main className={`main ${isCollapsed ? 'main--collapsed' : ''}`}>
+            <main className={`main ${effectiveCollapsed ? 'main--collapsed' : ''}`}>
                 <Routes>
                     <Route path="/" element={<Navigate to="/overview" replace />} />
                     <Route path="/overview" element={<Overview />} />

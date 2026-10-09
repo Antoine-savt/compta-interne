@@ -99,7 +99,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                 style={{
                     maxWidth: 580,
                     width: '94%',
-                    background: '#ffffff',
+                    background: 'var(--surface)',
                     borderRadius: 10,
                     boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.2)',
                     overflow: 'hidden',
@@ -110,26 +110,26 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* ─── Entête ─── */}
-                <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#ffffff' }}>
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface)' }}>
                     <div>
-                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>
+                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
                             Colonnes de statuts
                         </h3>
-                        <p style={{ margin: '2px 0 0', fontSize: 12, color: '#64748b' }}>
+                        <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
                             Créez, modifiez ou supprimez vos colonnes de sélection.
                         </p>
                     </div>
                     <button
                         type="button"
                         onClick={onClose}
-                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, color: '#94a3b8', padding: '4px 8px' }}
+                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, color: 'var(--text-light)', padding: '4px 8px' }}
                     >
                         ✕
                     </button>
                 </div>
 
                 {/* ─── Onglets de navigation dans la modale ─── */}
-                <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', background: '#f8fafc', padding: '0 20px' }}>
+                <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--bg2)', padding: '0 20px' }}>
                     <button
                         type="button"
                         onClick={() => { setIsCreating(false); setEditingColId(null); }}
@@ -138,7 +138,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                             border: 'none',
                             background: 'transparent',
                             borderBottom: !isCreating && !editingColId ? '2px solid var(--accent)' : '2px solid transparent',
-                            color: !isCreating && !editingColId ? 'var(--accent)' : '#64748b',
+                            color: !isCreating && !editingColId ? 'var(--accent)' : 'var(--text-muted)',
                             fontWeight: 600,
                             fontSize: 13,
                             cursor: 'pointer',
@@ -154,7 +154,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                             border: 'none',
                             background: 'transparent',
                             borderBottom: isCreating ? '2px solid var(--accent)' : '2px solid transparent',
-                            color: isCreating ? 'var(--accent)' : '#64748b',
+                            color: isCreating ? 'var(--accent)' : 'var(--text-muted)',
                             fontWeight: 600,
                             fontSize: 13,
                             cursor: 'pointer',
@@ -170,7 +170,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                     {!isCreating && !editingColId && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             {cols.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '32px 16px', color: '#94a3b8' }}>
+                                <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-light)' }}>
                                     <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>Aucune colonne personnalisée.</p>
                                     <button
                                         type="button"
@@ -190,13 +190,13 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                             alignItems: 'center',
                                             justifyContent: 'space-between',
                                             padding: '10px 14px',
-                                            background: '#f8fafc',
-                                            border: '1px solid #e2e8f0',
+                                            background: 'var(--bg2)',
+                                            border: '1px solid var(--border)',
                                             borderRadius: 8,
                                         }}
                                     >
                                         <div>
-                                            <div style={{ fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
+                                            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>
                                                 {col.label}
                                             </div>
                                             <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
@@ -232,7 +232,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                                 type="button"
                                                 className="btn btn--danger-ghost btn--sm"
                                                 onClick={() => handleDeleteColumn(col.id, col.label)}
-                                                style={{ fontSize: 11, padding: '4px 10px', color: '#ef4444' }}
+                                                style={{ fontSize: 11, padding: '4px 10px', color: 'var(--danger)' }}
                                                 title="Supprimer définitivement"
                                             >
                                                 Supprimer
@@ -248,7 +248,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                     {isCreating && (
                         <form onSubmit={handleCreateColumn} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                             <div>
-                                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4 }}>
+                                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
                                     Nom de la colonne *
                                 </label>
                                 <input
@@ -264,7 +264,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
                                     Options du menu déroulant ({newColOptions.length})
                                 </label>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -292,7 +292,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                                     updated[idx].border = pal.border;
                                                     setNewColOptions(updated);
                                                 }}
-                                                style={{ height: 30, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #cbd5e1' }}
+                                                style={{ height: 30, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}
                                             >
                                                 {COLOR_PALETTE.map((p) => (
                                                     <option key={p.id} value={p.color}>{p.label}</option>
@@ -301,7 +301,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                             <button
                                                 type="button"
                                                 onClick={() => setNewColOptions(newColOptions.filter((_, i) => i !== idx))}
-                                                style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}
+                                                style={{ border: 'none', background: 'transparent', color: 'var(--danger)', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}
                                                 title="Supprimer cette option"
                                             >
                                                 ✕
@@ -323,7 +323,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                     <select
                                         value={newOptColor.id}
                                         onChange={(e) => setNewOptColor(COLOR_PALETTE.find((p) => p.id === e.target.value) || COLOR_PALETTE[0])}
-                                        style={{ height: 30, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #cbd5e1' }}
+                                        style={{ height: 30, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}
                                     >
                                         {COLOR_PALETTE.map((p) => (
                                             <option key={p.id} value={p.id}>{p.label}</option>
@@ -375,7 +375,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                     {editingColId && currentEditingCol && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                             <div>
-                                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4 }}>
+                                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
                                     Nom de la colonne
                                 </label>
                                 <input
@@ -391,7 +391,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
+                                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
                                     Options ({currentEditingCol.options?.length || 0})
                                 </label>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -419,7 +419,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                                     const updated = { ...currentEditingCol, options: opts };
                                                     setCols(cols.map((c) => (c.id === currentEditingCol.id ? updated : c)));
                                                 }}
-                                                style={{ height: 30, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #cbd5e1' }}
+                                                style={{ height: 30, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}
                                             >
                                                 {COLOR_PALETTE.map((p) => (
                                                     <option key={p.id} value={p.color}>{p.label}</option>
@@ -432,7 +432,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                                     const updated = { ...currentEditingCol, options: opts };
                                                     setCols(cols.map((c) => (c.id === currentEditingCol.id ? updated : c)));
                                                 }}
-                                                style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}
+                                                style={{ border: 'none', background: 'transparent', color: 'var(--danger)', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}
                                                 title="Supprimer cette option"
                                             >
                                                 ✕
@@ -454,7 +454,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                     <select
                                         value={newOptColor.id}
                                         onChange={(e) => setNewOptColor(COLOR_PALETTE.find((p) => p.id === e.target.value) || COLOR_PALETTE[0])}
-                                        style={{ height: 30, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #cbd5e1' }}
+                                        style={{ height: 30, fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}
                                     >
                                         {COLOR_PALETTE.map((p) => (
                                             <option key={p.id} value={p.id}>{p.label}</option>
@@ -491,7 +491,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                                     type="button"
                                     className="btn btn--danger-ghost btn--sm"
                                     onClick={() => handleDeleteColumn(currentEditingCol.id, currentEditingCol.label)}
-                                    style={{ color: '#ef4444' }}
+                                    style={{ color: 'var(--danger)' }}
                                 >
                                     Supprimer la colonne
                                 </button>
@@ -517,7 +517,7 @@ export default function ModalManageCustomColumns({ columns = [], onClose, onSave
                 </div>
 
                 {/* ─── Footer ─── */}
-                <div style={{ padding: '12px 20px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
+                <div style={{ padding: '12px 20px', background: 'var(--bg2)', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
                     <button type="button" className="btn btn--secondary btn--sm" onClick={onClose}>
                         Fermer
                     </button>

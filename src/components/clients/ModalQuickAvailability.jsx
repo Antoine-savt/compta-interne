@@ -416,7 +416,7 @@ export default function ModalQuickAvailability({
                 </div>
 
                 {/* ─── CORPS DU HUB ───────────────────────────────────────────── */}
-                <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 480 }}>
+                <div className="qa-body" style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 480 }}>
                     {/* ═══ COLONNE PRINCIPALE : VUE CALENDRIER & CRÉNEAUX ═══════ */}
                     <div
                         style={{
@@ -617,7 +617,7 @@ export default function ModalQuickAvailability({
                             </div>
                         ) : isTeamCompareMode ? (
                             /* ─── VUE ÉQUIPE COMPARÉE ─── */
-                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${teamMembers.length}, 1fr)`, gap: 14 }}>
+                            <div className="qa-team-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${teamMembers.length}, 1fr)`, gap: 14 }}>
                                 {teamMembers.map((member) => {
                                     const slots = getSlotsForManager(member, activeDate);
                                     const freeSlots = slots.filter((s) => s.status === 'disponible');
@@ -839,6 +839,7 @@ export default function ModalQuickAvailability({
                     {/* ═══ COLONNE DROITE : RÉSERVATION RAPIDE EN 1 CLIC ════════ */}
                     {selectedSlot && (
                         <div
+                            className="qa-side"
                             style={{
                                 width: 330,
                                 background: 'var(--bg2)',

@@ -254,7 +254,7 @@ export default function Cloture() {
                             />
                         )}
 
-                        <div style={{ marginTop: 16 }}>
+                        <div className="line-grid-scroll" style={{ marginTop: 16 }}>
                             <div className="form-label" style={{ marginBottom: 6 }}>Lignes manuelles</div>
                             {manuelles.map((m, i) => (
                                 <div key={m.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 110px 140px 140px 32px', gap: 6, marginBottom: 6, alignItems: 'center' }}>

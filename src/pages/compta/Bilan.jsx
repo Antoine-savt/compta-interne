@@ -136,7 +136,7 @@ export default function Bilan() {
 
                 {/* ─── COLONNE ACTIF ─── */}
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                    <div style={{ padding: '16px 20px', background: '#f8fafc', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ padding: '16px 20px', background: 'var(--bg2)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h2 style={{ fontSize: 16, margin: 0, color: 'var(--text)' }}>ACTIF</h2>
                         <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent)' }}>
                             {formatMontant(actif.total)}
@@ -218,7 +218,7 @@ export default function Bilan() {
                     </div>
 
                     {/* Footer Actif */}
-                    <div style={{ padding: '14px 20px', background: '#f1f5f9', borderTop: '2px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}>
+                    <div style={{ padding: '14px 20px', background: 'var(--bg3)', borderTop: '2px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}>
                         <span>TOTAL ACTIF</span>
                         <span style={{ color: 'var(--accent)' }}>{formatMontant(actif.total)}</span>
                     </div>
@@ -226,7 +226,7 @@ export default function Bilan() {
 
                 {/* ─── COLONNE PASSIF ─── */}
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                    <div style={{ padding: '16px 20px', background: '#f8fafc', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ padding: '16px 20px', background: 'var(--bg2)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h2 style={{ fontSize: 16, margin: 0, color: 'var(--text)' }}>PASSIF</h2>
                         <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent)' }}>
                             {formatMontant(passif.total)}
@@ -251,7 +251,7 @@ export default function Bilan() {
                             ))}
 
                             {/* Résultat Net de l'exercice */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600, padding: '6px 8px', background: passif.resultatNet >= 0 ? '#f0fdf4' : '#fef2f2', borderRadius: 'var(--radius)', marginTop: 6 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600, padding: '6px 8px', background: passif.resultatNet >= 0 ? 'var(--success-bg)' : 'var(--danger-bg)', borderRadius: 'var(--radius)', marginTop: 6 }}>
                                 <span>
                                     Résultat net de l'exercice ({passif.resultatNet >= 0 ? 'Bénéfice' : 'Perte'})
                                 </span>
@@ -316,7 +316,7 @@ export default function Bilan() {
                     </div>
 
                     {/* Footer Passif */}
-                    <div style={{ padding: '14px 20px', background: '#f1f5f9', borderTop: '2px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}>
+                    <div style={{ padding: '14px 20px', background: 'var(--bg3)', borderTop: '2px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}>
                         <span>TOTAL PASSIF</span>
                         <span style={{ color: 'var(--accent)' }}>{formatMontant(passif.total)}</span>
                     </div>

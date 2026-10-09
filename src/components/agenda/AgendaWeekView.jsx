@@ -177,7 +177,7 @@ export default function AgendaWeekView({
     const nowTopPercent = isNowInGrid ? ((nowMin - START_HOUR * 60) / TOTAL_MINUTES) * 100 : null;
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', width: '100%', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg)' }}>
+        <div className="agenda-week" style={{ display: 'flex', flexDirection: 'column', width: '100%', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg)' }}>
             {/* En-tête des jours avec pastilles cliquables de résumé */}
             <div style={{ display: 'grid', gridTemplateColumns: '54px repeat(7, 1fr)', background: 'var(--bg3)', borderBottom: '1px solid var(--border)' }}>
                 <div style={{ padding: '8px 4px', borderRight: '1px solid var(--border)', fontSize: 11, color: 'var(--text-light)', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600 }}>

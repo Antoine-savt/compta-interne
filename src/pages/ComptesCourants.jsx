@@ -698,7 +698,7 @@ export default function ComptesCourants() {
             </div>
 
             {/* Barre d'onglets */}
-            <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
+            <div className="tab-strip" style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
                 <button
                     className={`btn ${activeTab === 'synthese' ? 'btn--primary' : 'btn--ghost'}`}
                     style={{ borderRadius: '6px 6px 0 0', borderBottom: 'none' }}

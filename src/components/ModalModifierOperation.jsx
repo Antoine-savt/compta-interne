@@ -1338,7 +1338,7 @@ export function ModalModifierOperation({ ecritureId, sourceId, sourceType, onClo
                                     </div>
 
                                     {/* Lignes */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                                    <div className="line-grid-scroll" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
                                         <div style={{ display: 'grid', gridTemplateColumns: '2fr 130px 55px 95px 120px 32px', gap: 6, fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
                                             <span>Description</span>
                                             <span>Début</span>
